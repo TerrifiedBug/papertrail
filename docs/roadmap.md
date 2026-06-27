@@ -30,10 +30,14 @@ Keep deployed Picos current without USB. The web flasher only writes config, so 
 device runs whatever firmware was last uploaded — it drifts from the repo. OTA closes
 that gap from the bridge.
 
-- **Bridge serves firmware:** `GET /api/firmware/manifest` → `{version, files:[{path, sha256}]}`;
-  `GET /api/firmware/files/<path>` → content (device-token auth, LAN). Firmware bundled
-  into the image (CI builds from the repo). [Packaging: `COPY firmware/` into the image +
-  a small serve route.]
+- **Bridge serves firmware:** `GET /api/firmware/manifest` → `{version, files:{path: sha256}}`
+  (hashed at startup from the bundled `firmware/` — no build step); `GET /api/firmware/file?path=…`
+  → content (device-token auth, LAN). Packaging: `COPY firmware/` into the image (CI already
+  builds from the repo).
+- **Storage discipline (Pico W = ~1MB FS, firmware ≈150KB):** the device keeps a local
+  `manifest.json` and pulls **only files whose sha changed** (delta — most updates are 1–2
+  files). Per-file atomic write (`<path>.new` → verify sha → rename) needs only ~30KB spare
+  at a time, not a second full copy. Files dropped from the manifest are deleted.
 - **Device:** on boot / every N polls, fetch the manifest, diff `sha256` vs a local
   `version.txt`. For each changed file: download → write `<path>.new` → verify hash →
   atomic rename → bump version → reset. The poll's `control` block can carry `fw_latest`
