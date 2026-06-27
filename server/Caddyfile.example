@@ -33,7 +33,12 @@ papertrail.example.com {
         reverse_proxy localhost:8000
     }
 
-    # Everything else (including /current) is not served publicly.
+    # Everything else is NOT served publicly. This deliberately includes:
+    #   - /current               (Pico poll; LAN-only)
+    #   - /admin + /api/admin/*   (LAN-only admin dashboard + API)
+    # The admin surface is gated by PAPERTRAIL_ADMIN_TOKEN, but it must ALSO be
+    # kept off the internet — only POST /events is meant to be publicly reachable.
+    # Do not add a handle that proxies /admin or /api/admin to localhost:8000.
     handle {
         respond "not found" 404
     }

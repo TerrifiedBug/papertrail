@@ -43,6 +43,20 @@ class TokenRow:
 
 
 @dataclass(frozen=True)
+class AdminTokenRow:
+    """A token as listed by the admin backend. Carries a stable ``id`` handle
+    (the sha256 prefix) but NEVER the plaintext — only the stored hash, from
+    which the admin layer derives a non-secret preview."""
+
+    id: str                         # stable handle: token_sha256[:16]
+    token_sha256: str
+    kind: str
+    device_id: str
+    channels: Optional[list[str]]
+    rate_per_min: int
+
+
+@dataclass(frozen=True)
 class DeviceRow:
     id: str
     channels: list[str]
@@ -274,6 +288,165 @@ class Store:
                 (last_seen_at, last_batt, last_rssi, last_fw, last_uptime, device_id),
             )
 
+    # --- devices: admin mutations ----------------------------------------------
+
+    def list_devices(self) -> list[DeviceRow]:
+        """All devices (for the admin dashboard), ordered by id."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, channels, fallback, poll_interval_s, low_batt_interval_s,"
+                " last_seen_at, last_batt, last_rssi, last_fw, last_uptime"
+                " FROM devices ORDER BY id"
+            ).fetchall()
+        return [
+            DeviceRow(
+                id=r["id"],
+                channels=json.loads(r["channels"]),
+                fallback=json.loads(r["fallback"]),
+                poll_interval_s=r["poll_interval_s"],
+                low_batt_interval_s=r["low_batt_interval_s"],
+                last_seen_at=r["last_seen_at"],
+                last_batt=r["last_batt"],
+                last_rssi=r["last_rssi"],
+                last_fw=r["last_fw"],
+                last_uptime=r["last_uptime"],
+            )
+            for r in rows
+        ]
+
+    def add_device(
+        self,
+        *,
+        id: str,
+        channels: list[str],
+        fallback: dict[str, Any],
+        poll_interval_s: int = 120,
+        low_batt_interval_s: int = 600,
+    ) -> bool:
+        """Insert a new device. Returns False if the id already exists (caller
+        maps that to 409). The caller is responsible for validating ``fallback``
+        (via schema.validate_fallback) BEFORE calling so a bad shape 422s first."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO devices"
+                " (id, channels, fallback, poll_interval_s, low_batt_interval_s)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    id,
+                    json.dumps(channels),
+                    json.dumps(fallback),
+                    int(poll_interval_s),
+                    int(low_batt_interval_s),
+                ),
+            )
+            return cur.rowcount > 0
+
+    def update_device(
+        self,
+        device_id: str,
+        *,
+        channels: Optional[list[str]] = None,
+        fallback: Optional[dict[str, Any]] = None,
+        poll_interval_s: Optional[int] = None,
+        low_batt_interval_s: Optional[int] = None,
+    ) -> bool:
+        """Partial update (PATCH). Only the fields explicitly passed (not None)
+        are written. Returns False if the device does not exist."""
+        sets: list[str] = []
+        vals: list[Any] = []
+        if channels is not None:
+            sets.append("channels = ?")
+            vals.append(json.dumps(channels))
+        if fallback is not None:
+            sets.append("fallback = ?")
+            vals.append(json.dumps(fallback))
+        if poll_interval_s is not None:
+            sets.append("poll_interval_s = ?")
+            vals.append(int(poll_interval_s))
+        if low_batt_interval_s is not None:
+            sets.append("low_batt_interval_s = ?")
+            vals.append(int(low_batt_interval_s))
+        if not sets:
+            # Nothing to change: succeed iff the device exists.
+            return self.get_device(device_id) is not None
+        vals.append(device_id)
+        with self._conn() as conn:
+            cur = conn.execute(
+                f"UPDATE devices SET {', '.join(sets)} WHERE id = ?", vals
+            )
+            return cur.rowcount > 0
+
+    def delete_device(self, device_id: str) -> bool:
+        """Delete a device AND cascade-delete its tokens + events. Returns False
+        if the device did not exist."""
+        with self._conn() as conn:
+            cur = conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+            conn.execute("DELETE FROM tokens WHERE device_id = ?", (device_id,))
+            conn.execute("DELETE FROM events WHERE device = ?", (device_id,))
+            return cur.rowcount > 0
+
+    # --- tokens: admin mutations -----------------------------------------------
+
+    def list_tokens(self) -> list[AdminTokenRow]:
+        """All tokens for the admin backend. Returns the stored hash + a stable
+        id handle; the plaintext is NEVER recoverable (only its sha256 is kept)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT token_sha256, kind, device_id, channels, rate_per_min"
+                " FROM tokens ORDER BY created_at, id"
+            ).fetchall()
+        return [
+            AdminTokenRow(
+                id=r["token_sha256"][:16],
+                token_sha256=r["token_sha256"],
+                kind=r["kind"],
+                device_id=r["device_id"],
+                channels=json.loads(r["channels"]) if r["channels"] is not None else None,
+                rate_per_min=r["rate_per_min"],
+            )
+            for r in rows
+        ]
+
+    def add_token(
+        self,
+        *,
+        token_sha256: str,
+        kind: str,
+        device_id: str,
+        channels: Optional[list[str]] = None,
+        rate_per_min: int = 60,
+    ) -> str:
+        """Persist a token by its sha256 ONLY (the plaintext is never stored).
+        Returns the stable id handle (the first 16 hex chars of the hash)."""
+        now = int(time.time())
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO tokens"
+                " (token_sha256, kind, device_id, channels, rate_per_min, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    token_sha256,
+                    kind,
+                    device_id,
+                    json.dumps(channels) if channels is not None else None,
+                    int(rate_per_min),
+                    now,
+                ),
+            )
+        return token_sha256[:16]
+
+    def delete_token(self, token_id: str) -> bool:
+        """Revoke a token by its id handle (a sha256 prefix; full hash also
+        accepted). Returns False if no row matched."""
+        with self._conn() as conn:
+            # Match ONLY the canonical 16-hex id handle or the full 64-hex hash --
+            # never an open-ended prefix (a short id must not delete many tokens).
+            cur = conn.execute(
+                "DELETE FROM tokens WHERE token_sha256 = ? OR substr(token_sha256, 1, 16) = ?",
+                (token_id, token_id),
+            )
+            return cur.rowcount > 0
+
     # --- events -----------------------------------------------------------------
 
     def insert_event(self, event: EventRow) -> bool:
@@ -320,3 +493,39 @@ class Store:
             )
             for r in rows
         ]
+
+    def events_for_device_recent(
+        self, device_id: str, limit: int = 20
+    ) -> list[EventRow]:
+        """Recent events for a device, NEWEST FIRST (for the admin event log)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, device, channel, priority, ttl_seconds, layout, content,"
+                " received_at, raw_size FROM events WHERE device = ?"
+                " ORDER BY received_at DESC, id DESC LIMIT ?",
+                (device_id, int(limit)),
+            ).fetchall()
+        return [
+            EventRow(
+                id=r["id"],
+                device=r["device"],
+                channel=r["channel"],
+                priority=r["priority"],
+                ttl_seconds=r["ttl_seconds"],
+                layout=r["layout"],
+                content=json.loads(r["content"]),
+                received_at=r["received_at"],
+                raw_size=r["raw_size"],
+            )
+            for r in rows
+        ]
+
+    def delete_event(self, device_id: str, event_id: str) -> bool:
+        """Delete one event (scoped to its device, so an admin can clear the
+        screen). Returns False if no matching event existed."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM events WHERE id = ? AND device = ?",
+                (event_id, device_id),
+            )
+            return cur.rowcount > 0

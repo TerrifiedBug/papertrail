@@ -14,6 +14,9 @@ services:
       PAPERTRAIL_DB: /data/papertrail.db
       PAPERTRAIL_SEED_FILE: /data/seed.json
       PAPERTRAIL_MAX_BODY_BYTES: "8192"
+      # Admin dashboard at /admin. Set to enable it (empty => /api/admin/* is 503).
+      # Keep /admin LAN-only -- never expose it via Caddy. See docs/dashboard.md.
+      PAPERTRAIL_ADMIN_TOKEN: ${PAPERTRAIL_ADMIN_TOKEN:-}
     volumes:
       # Persist the sqlite file + seed across restarts.
       - papertrail-data:/data

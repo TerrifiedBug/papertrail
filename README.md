@@ -10,6 +10,8 @@ last image at **zero power**, so the tag can run for weeks on a small LiPo.
 - **Pixel geometry:** [`docs/layout-specs.md`](docs/layout-specs.md) — exact regions for the 250x122 panel.
 - **Operations:** [`docs/deploy.md`](docs/deploy.md) — run the bridge, mint tokens, push events.
 - **Security:** [`docs/security.md`](docs/security.md) — threat model + what's implemented vs. out of scope.
+- **Dashboard:** [`docs/dashboard.md`](docs/dashboard.md) — the LAN-only admin web UI (devices, tokens, live preview).
+- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — web-flashing, sticky events, what's next.
 
 ---
 

@@ -42,10 +42,18 @@ def test_priority_default_zero():
     assert validate_envelope(raw).priority == 0
 
 
-def test_ttl_capped_high_and_rejected_low():
+def test_ttl_cap_sticky_and_reject_negative():
+    # high values cap at 7 days
     assert validate_envelope(_env(ttl_seconds=10_000_000)).ttl_seconds == 604_800
+    # 0 => sticky (no expiry), now accepted
+    assert validate_envelope(_env(ttl_seconds=0)).ttl_seconds == 0
+    # omitted => sticky (None)
+    raw = _env()
+    del raw["ttl_seconds"]
+    assert validate_envelope(raw).ttl_seconds is None
+    # negative is still rejected (ge=0)
     with pytest.raises(ValidationError):
-        validate_envelope(_env(ttl_seconds=0))
+        validate_envelope(_env(ttl_seconds=-1))
 
 
 def test_bad_schema_rejected():

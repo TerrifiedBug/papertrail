@@ -22,6 +22,10 @@ services:
       PAPERTRAIL_DB: /data/papertrail.db
       PAPERTRAIL_SEED_FILE: /data/seed.json
       PAPERTRAIL_MAX_BODY_BYTES: "8192"
+      # Admin dashboard at /admin. Set a strong token to enable it; leave empty
+      # and /api/admin/* returns 503 (dashboard disabled). Keep /admin LAN-only --
+      # do NOT expose it through Caddy. See docs/dashboard.md.
+      PAPERTRAIL_ADMIN_TOKEN: ${PAPERTRAIL_ADMIN_TOKEN:-}
     volumes:
       - ./data:/data           # ./data/seed.json bootstraps tokens/devices; db lives here
     healthcheck:

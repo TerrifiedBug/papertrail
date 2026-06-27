@@ -9,7 +9,7 @@ frozen for v1; any additive change ships as ``pico-paper.v2``.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -159,7 +159,9 @@ class Envelope(BaseModel):
     device: str = Field(min_length=1)
     channel: str = Field(min_length=1, max_length=64)
     priority: int = 0
-    ttl_seconds: int = Field(ge=1)
+    # Optional: omitted or 0 => NO expiry (sticky until replaced/deleted). A
+    # positive value expires after N seconds (capped at TTL_CAP = 7 days).
+    ttl_seconds: Optional[int] = Field(default=None, ge=0)
     layout: Layout
     content: dict[str, Any]
 
@@ -171,8 +173,11 @@ class Envelope(BaseModel):
 
     @field_validator("ttl_seconds")
     @classmethod
-    def _cap_ttl(cls, v: int) -> int:
-        # ttl >=1 is enforced by the field constraint; upper bound is capped.
+    def _cap_ttl(cls, v):
+        # None (omitted) or 0 => no expiry (sticky); positive values cap at
+        # TTL_CAP. Negative is already rejected by the ge=0 field constraint.
+        if v is None or v <= 0:
+            return v
         return min(v, TTL_CAP)
 
     @model_validator(mode="after")

@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex,nofollow" />
+<title>papertrail · admin</title>
+<style>
+  :root{
+    --paper:#f3f0e9;
+    --card:#fffaf1;
+    --ink:#111;
+    --muted:#6a665f;
+    --danger:#c0392b;
+    --rule:#ddd;
+    --red:#d12b1f;            /* the device's red plane */
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;
+    line-height:1.4;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 80px;}
+  a{color:var(--ink);}
+
+  /* --- wordmark ------------------------------------------------------------ */
+  .wordmark{
+    font-weight:800;
+    letter-spacing:-.03em;
+    line-height:.82;
+    text-transform:lowercase;
+    font-size:46px;
+    user-select:none;
+  }
+  .wordmark span{display:block;}
+
+  /* --- kicker / meta ------------------------------------------------------- */
+  .kicker{
+    font-size:13px;
+    text-transform:uppercase;
+    letter-spacing:.12em;
+    color:var(--muted);
+    font-weight:600;
+  }
+  .meta{font-size:13px;color:var(--muted);}
+  .meta.danger{color:var(--danger);font-weight:600;}
+
+  /* --- card ---------------------------------------------------------------- */
+  .card{
+    background:var(--card);
+    border:1.5px solid var(--ink);
+    border-radius:24px;
+    padding:18px;
+    box-shadow:4px 4px 0 var(--ink);
+  }
+
+  /* --- buttons / inputs / pills -------------------------------------------- */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    font:inherit;font-size:14px;font-weight:600;
+    border-radius:999px;
+    border:1.5px solid var(--ink);
+    background:var(--paper);
+    color:var(--ink);
+    padding:9px 16px;
+    cursor:pointer;
+    text-decoration:none;
+    transition:transform .04s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--ink);color:#fff;}
+  .btn-danger{color:var(--danger);border-color:var(--danger);background:var(--paper);}
+  .btn-sm{padding:6px 12px;font-size:13px;}
+  .btn-icon{
+    width:34px;height:34px;padding:0;font-size:20px;line-height:1;border-radius:999px;
+  }
+  .btn[disabled]{opacity:.5;cursor:not-allowed;}
+
+  .inp{
+    width:100%;
+    background:#fff;
+    border:1.5px solid var(--ink);
+    border-radius:999px;
+    padding:12px;
+    font:inherit;font-size:14px;
+    color:var(--ink);
+  }
+  .inp.ta{border-radius:16px;resize:vertical;min-height:64px;font-family:inherit;}
+  select.inp{appearance:none;-webkit-appearance:none;background-image:none;cursor:pointer;}
+  .field{margin-bottom:12px;}
+  .field > label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:0 0 5px 4px;}
+
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;
+    border-radius:999px;border:1.5px solid var(--ink);
+    background:var(--paper);
+    padding:6px 12px;font-size:13px;font-weight:600;
+  }
+
+  /* --- tags ---------------------------------------------------------------- */
+  .badges{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;}
+  .tag{
+    border-radius:999px;background:var(--ink);color:#fff;
+    font-size:12px;font-weight:600;padding:5px 9px;white-space:nowrap;
+  }
+  .tag-muted{background:var(--paper);color:var(--muted);border:1.5px solid var(--rule);}
+  .tag-danger{background:var(--danger);color:#fff;}
+
+  /* --- layout chrome ------------------------------------------------------- */
+  .topbar{
+    display:flex;align-items:flex-start;justify-content:space-between;
+    gap:18px;flex-wrap:wrap;margin-bottom:24px;
+  }
+  .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .nav .btn[data-active="1"]{background:var(--ink);color:#fff;}
+
+  .section-head{
+    display:flex;align-items:center;justify-content:space-between;
+    gap:14px;flex-wrap:wrap;margin:6px 0 16px;
+  }
+  .section-head h2{margin:0;font-size:22px;letter-spacing:-.01em;}
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(min(460px,100%),1fr));
+    gap:18px;
+  }
+
+  /* --- device card --------------------------------------------------------- */
+  .dev-id{font-size:20px;font-weight:800;letter-spacing:-.01em;margin-top:2px;word-break:break-all;}
+  .epaper{
+    display:block;width:100%;max-width:500px;height:auto;aspect-ratio:250/122;
+    background:#fff;border:1px solid var(--ink);border-radius:6px;margin:4px 0 8px;
+    image-rendering:auto;
+  }
+  .screen-caption{font-size:12px;color:var(--muted);margin-bottom:10px;}
+  .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;}
+
+  /* --- empty state --------------------------------------------------------- */
+  .empty{
+    border:1.5px dashed var(--ink);
+    border-radius:24px;
+    padding:34px;
+    text-align:center;
+    color:var(--muted);
+  }
+  .empty strong{color:var(--ink);display:block;margin-bottom:6px;font-size:16px;}
+
+  /* --- rows (events / tokens) --------------------------------------------- */
+  .row{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:12px 0;border-bottom:1px solid var(--rule);
+  }
+  .row:last-child{border-bottom:0;}
+  .row-main{min-width:0;}
+  .row-title{font-weight:700;word-break:break-all;}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+
+  /* --- modal --------------------------------------------------------------- */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(17,17,17,.42);
+    display:flex;align-items:flex-start;justify-content:center;
+    padding:34px 16px;overflow:auto;z-index:50;
+  }
+  .modal-card{
+    position:relative;
+    background:var(--card);
+    border:1.5px solid var(--ink);
+    border-radius:24px;
+    box-shadow:4px 4px 0 var(--ink);
+    padding:22px;
+    width:100%;max-width:560px;
+  }
+  .modal-card .btn-close{position:absolute;top:14px;right:14px;}
+  .modal-title{font-size:22px;font-weight:800;letter-spacing:-.01em;margin:2px 0 16px;}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+
+  /* --- token reveal -------------------------------------------------------- */
+  .reveal{
+    background:#fff;border:1.5px solid var(--ink);border-radius:16px;
+    padding:14px;margin:12px 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14px;word-break:break-all;user-select:all;
+  }
+
+  /* --- gate ---------------------------------------------------------------- */
+  .gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+  .gate-card{width:100%;max-width:420px;}
+  .gate .wordmark{margin-bottom:18px;}
+
+  /* --- toasts -------------------------------------------------------------- */
+  .toasts{position:fixed;left:0;right:0;bottom:18px;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:80;pointer-events:none;}
+  .toast{
+    pointer-events:auto;
+    background:var(--ink);color:#fff;border-radius:999px;
+    padding:10px 18px;font-size:14px;font-weight:600;
+    box-shadow:4px 4px 0 rgba(17,17,17,.25);max-width:90vw;
+  }
+  .toast.err{background:var(--danger);}
+
+  .footer-note{margin-top:40px;text-align:center;font-size:12px;color:var(--muted);}
+  .hide{display:none !important;}
+  .spread{display:flex;flex-wrap:wrap;gap:10px;}
+  .spread > *{flex:1 1 140px;}
+
+  /* --- responsive ---------------------------------------------------------- */
+  @media(max-width:520px){
+    .wrap{padding:18px 14px 64px;}
+    .wordmark{font-size:34px;}
+    .card{border-radius:20px;padding:14px;}
+    .modal-card{border-radius:20px;padding:16px;}
+    .empty{border-radius:20px;padding:24px;}
+    .two-col{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ====================== TOKEN GATE ====================== -->
+<div id="gate" class="gate">
+  <div class="gate-card card">
+    <div class="wordmark"><span>paper</span><span>trail</span></div>
+    <div class="kicker" style="margin-bottom:14px;">admin access</div>
+    <form id="gate-form" autocomplete="off">
+      <div class="field">
+        <label for="gate-token">Admin token</label>
+        <input class="inp" id="gate-token" type="password" placeholder="paste PAPERTRAIL_ADMIN_TOKEN" autocomplete="off" />
+      </div>
+      <div id="gate-error" class="meta danger" style="margin:0 0 12px 4px;"></div>
+      <button class="btn btn-primary" type="submit" style="width:100%;">Enter</button>
+    </form>
+    <div class="meta" style="margin-top:14px;">
+      The token is kept in this browser's localStorage and sent as a bearer header on every request.
+      LAN-only &mdash; this page should never be reachable from the public internet.
+    </div>
+  </div>
+</div>
+
+<!-- ====================== APP ====================== -->
+<div id="app" class="wrap hide">
+  <div class="topbar">
+    <div class="wordmark"><span>paper</span><span>trail</span></div>
+    <div class="nav">
+      <button class="btn" data-tab="dashboard" type="button">Dashboard</button>
+      <button class="btn" data-tab="tokens" type="button">Tokens</button>
+      <button class="btn btn-danger" id="signout" type="button">Sign out</button>
+    </div>
+  </div>
+
+  <div id="view"></div>
+
+  <div class="footer-note">
+    papertrail admin &middot; LAN-only. Caddy must NOT expose <span class="mono">/admin</span> or
+    <span class="mono">/api/admin/*</span> publicly &mdash; only <span class="mono">/events</span> stays public.
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Constants + state
+   ============================================================ */
+const API = "/api/admin";
+const TOKEN_KEY = "papertrail_admin_token";
+const RED = "#d12b1f";                 // device red plane
+const INK = "#111";
+const PAPER = "#fff";
+
+let token = localStorage.getItem(TOKEN_KEY) || "";
+let modalCount = 0;
+let refreshTimer = null;
+const state = { tab: "dashboard", devices: [] };
+
+const LAYOUTS = ["status_card", "alert", "list", "metric", "qr"];
+const LAYOUT_FIELDS = {
+  status_card: [
+    { k: "title",    label: "Title",                 type: "text" },
+    { k: "status",   label: "Status (top-right)",    type: "text" },
+    { k: "subtitle", label: "Subtitle",              type: "text" },
+    { k: "lines",    label: "Lines (one per line)",  type: "lines" },
+    { k: "footer",   label: "Footer",                type: "text" }
+  ],
+  alert: [
+    { k: "severity", label: "Severity", type: "select", options: ["low", "med", "high"] },
+    { k: "title",    label: "Title",    type: "text" },
+    { k: "message",  label: "Message",  type: "textarea" },
+    { k: "footer",   label: "Footer",   type: "text" }
+  ],
+  list: [
+    { k: "title",  label: "Title",                 type: "text" },
+    { k: "items",  label: "Items (one per line)",  type: "lines" },
+    { k: "footer", label: "Footer",                type: "text" }
+  ],
+  metric: [
+    { k: "label",  label: "Label",  type: "text" },
+    { k: "value",  label: "Value",  type: "text" },
+    { k: "unit",   label: "Unit",   type: "text" },
+    { k: "trend",  label: "Trend",  type: "text" },
+    { k: "footer", label: "Footer", type: "text" }
+  ],
+  qr: [
+    { k: "title",   label: "Title",    type: "text" },
+    { k: "qr_data", label: "QR data",  type: "text" },
+    { k: "caption", label: "Caption",  type: "textarea" }
+  ]
+};
+
+/* ============================================================
+   Tiny DOM helper.  `text` attr -> textContent (XSS-safe). We
+   NEVER assign innerHTML with API/device content anywhere.
+   ============================================================ */
+function el(tag, attrs) {
+  const n = document.createElement(tag);
+  if (attrs) {
+    for (const k in attrs) {
+      const v = attrs[k];
+      if (v == null) continue;
+      if (k === "class") n.className = v;
+      else if (k === "text") n.textContent = v;
+      else if (k === "html") { /* intentionally unsupported */ }
+      else if (k === "style") n.setAttribute("style", v);
+      else if (k.slice(0, 2) === "on" && typeof v === "function") n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    }
+  }
+  for (let i = 2; i < arguments.length; i++) {
+    let kid = arguments[i];
+    if (kid == null || kid === false) continue;
+    if (Array.isArray(kid)) { kid.forEach(function (c) { if (c != null) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); continue; }
+    n.appendChild(typeof kid === "string" ? document.createTextNode(kid) : kid);
+  }
+  return n;
+}
+function field(labelText, inputNode) {
+  return el("div", { class: "field" }, el("label", { text: labelText }), inputNode);
+}
+function selectEl(options, value) {
+  const s = el("select", { class: "inp" });
+  options.forEach(function (o) {
+    const opt = el("option", { value: o, text: o });
+    if (o === value) opt.selected = true;
+    s.appendChild(opt);
+  });
+  return s;
+}
+
+/* ============================================================
+   Toast notifications
+   ============================================================ */
+function toast(msg, kind) {
+  const t = el("div", { class: "toast" + (kind === "err" ? " err" : ""), text: msg });
+  document.getElementById("toasts").appendChild(t);
+  setTimeout(function () { t.remove(); }, 4200);
+}
+
+/* ============================================================
+   API layer
+   ============================================================ */
+class ApiError extends Error {
+  constructor(status, message, detail) { super(message); this.status = status; this.detail = detail; }
+}
+async function api(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({ "Authorization": "Bearer " + token }, opts.headers || {});
+  let body = opts.body;
+  if (body != null && typeof body !== "string") { body = JSON.stringify(body); headers["Content-Type"] = "application/json"; }
+  let res;
+  try {
+    res = await fetch(API + path, { method: opts.method || "GET", headers: headers, body: body });
+  } catch (e) {
+    throw new ApiError(0, "Network error: " + e.message);
+  }
+  if (res.status === 401) throw new ApiError(401, "Invalid or missing admin token.");
+  if (res.status === 503) throw new ApiError(503, "Admin API is disabled (PAPERTRAIL_ADMIN_TOKEN is unset on the server).");
+  let data = null;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.indexOf("application/json") !== -1) { try { data = await res.json(); } catch (e) { /* empty body */ } }
+  if (!res.ok) {
+    let msg = "Request failed (" + res.status + ").";
+    if (data && typeof data.detail === "string") msg = data.detail;
+    throw new ApiError(res.status, msg, data);
+  }
+  return data;
+}
+function handleApiError(e, ctx) {
+  if (e && e.status === 401) { signOut("Session expired or token rejected. Please sign in again."); return; }
+  if (e && e.status === 503) { signOut(e.message); return; }
+  toast((ctx ? ctx + ": " : "") + (e && e.message ? e.message : "Unknown error"), "err");
+}
+
+/* ============================================================
+   Formatting helpers
+   ============================================================ */
+function relTime(ts) {
+  if (ts == null) return "never";
+  const diff = Math.floor(Date.now() / 1000) - Number(ts);
+  if (diff < 0) return "just now";
+  if (diff < 5) return "just now";
+  if (diff < 60) return diff + "s ago";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+  if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+  return Math.floor(diff / 86400) + "d ago";
+}
+function inFromNow(ts) {
+  if (ts == null) return "";
+  const diff = Number(ts) - Math.floor(Date.now() / 1000);
+  if (diff <= 0) return "expired";
+  if (diff < 60) return "in " + diff + "s";
+  if (diff < 3600) return "in " + Math.floor(diff / 60) + "m";
+  if (diff < 86400) return "in " + Math.floor(diff / 3600) + "h";
+  return "in " + Math.floor(diff / 86400) + "d";
+}
+
+/* ============================================================
+   ePaper preview renderer  (250x122 logical, 2x buffer -> 500x244)
+   Geometry follows docs/layout-specs.md exactly. All text drawn
+   via canvas fillText (inherently HTML-safe).
+   ============================================================ */
+function pxFont(n) { return (8 * n) + "px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Courier New', monospace"; }
+
+function drawText(ctx, s, x, y, n, color) {
+  s = (s == null) ? "" : String(s);
+  ctx.fillStyle = color || INK;
+  ctx.font = pxFont(n);
+  ctx.textBaseline = "top";
+  // Per-glyph placement at an 8*n pitch -> matches the device's fixed 8px cell.
+  for (let i = 0; i < s.length; i++) {
+    ctx.fillText(s[i], x + i * 8 * n, y);
+  }
+}
+function hline(ctx, y) { ctx.fillStyle = INK; ctx.fillRect(0, y, 250, 1); }
+function rectOutline(ctx, x, y, w, h, color) {
+  ctx.fillStyle = color || INK;
+  ctx.fillRect(x, y, w, 1);
+  ctx.fillRect(x, y + h - 1, w, 1);
+  ctx.fillRect(x, y, 1, h);
+  ctx.fillRect(x + w - 1, y, 1, h);
+}
+function clip(s, N) {
+  s = (s == null) ? "" : String(s);
+  if (s.length <= N) return s;
+  if (N <= 3) return s.slice(0, N);
+  return s.slice(0, N - 3) + "...";
+}
+function wrapLines(s, N, L) {
+  s = (s == null) ? "" : String(s).trim();
+  const words = s.length ? s.split(/\s+/) : [];
+  const lines = [];
+  let cur = "";
+  const pushCur = function () { if (cur !== "") { lines.push(cur); cur = ""; } };
+  for (let wi = 0; wi < words.length; wi++) {
+    let w = words[wi];
+    while (w.length > N) { pushCur(); lines.push(w.slice(0, N)); w = w.slice(N); }
+    if (cur === "") cur = w;
+    else if ((cur + " " + w).length <= N) cur += " " + w;
+    else { pushCur(); cur = w; }
+  }
+  pushCur();
+  if (lines.length > L) {
+    lines.length = L;
+    let last = lines[L - 1];
+    if (last.length > N - 3) last = last.slice(0, N - 3);
+    lines[L - 1] = last + "...";
+  }
+  return lines;
+}
+
+function renderPreview(canvas, layout, content) {
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(2, 2);
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, 250, 122);
+  const c = content || {};
+  try {
+    if (layout === "status_card") renderStatusCard(ctx, c);
+    else if (layout === "alert") renderAlert(ctx, c);
+    else if (layout === "list") renderList(ctx, c);
+    else if (layout === "metric") renderMetric(ctx, c);
+    else if (layout === "qr") renderQr(ctx, c);
+    else drawText(ctx, clip("layout: " + layout, 30), 4, 4, 1);
+  } catch (e) {
+    drawText(ctx, "preview error", 4, 4, 1);
+  }
+}
+function renderStatusCard(ctx, c) {
+  drawText(ctx, clip(c.title, 12), 4, 2, 2);
+  const status = clip(c.status, 8);
+  drawText(ctx, status, 246 - 8 * status.length, 6, 1);
+  hline(ctx, 20);
+  drawText(ctx, clip(c.subtitle, 30), 4, 25, 1);
+  const lines = Array.isArray(c.lines) ? c.lines : [];
+  lines.slice(0, 5).forEach(function (ln, i) { drawText(ctx, clip(ln, 30), 4, 40 + 11 * i, 1); });
+  hline(ctx, 100);
+  drawText(ctx, clip(c.footer, 30), 4, 110, 1);
+}
+function renderAlert(ctx, c) {
+  const sev = (c.severity === "high" || c.severity === "med") ? c.severity : "low";
+  const label = sev === "high" ? "!! HIGH" : (sev === "med" ? "MED" : "LOW");
+  if (sev === "high") {
+    ctx.fillStyle = RED; ctx.fillRect(0, 0, 250, 28);     // red banner
+    drawText(ctx, label, 4, 6, 2, PAPER);                 // punched white label
+    rectOutline(ctx, 0, 0, 250, 122, RED);                // 2px red frame
+    rectOutline(ctx, 1, 1, 248, 120, RED);
+  } else {
+    drawText(ctx, label, 4, 6, 2, INK);
+    hline(ctx, 28);
+  }
+  drawText(ctx, clip(c.title, 15), 4, 34, 2);
+  wrapLines(c.message, 30, 4).forEach(function (ln, i) { drawText(ctx, ln, 4, 58 + 11 * i, 1); });
+  hline(ctx, 100);
+  drawText(ctx, clip(c.footer, 30), 4, 110, 1);
+}
+function renderList(ctx, c) {
+  drawText(ctx, clip(c.title, 15), 4, 2, 2);
+  hline(ctx, 20);
+  const items = Array.isArray(c.items) ? c.items : [];
+  items.slice(0, 6).forEach(function (it, i) {
+    const y = 26 + 12 * i;
+    drawText(ctx, "[ ] ", 4, y, 1);
+    drawText(ctx, clip(it, 26), 36, y, 1);
+  });
+  hline(ctx, 100);
+  drawText(ctx, clip(c.footer, 30), 4, 110, 1);
+}
+function renderMetric(ctx, c) {
+  const value = clip(c.value, 7);
+  const unit = clip(c.unit, 4);
+  drawText(ctx, clip(c.label, 30), 4, 6, 1);
+  hline(ctx, 18);
+  const valuePx = 32 * value.length;
+  const unitPx = unit ? 16 * unit.length : 0;
+  const gap = unit ? 6 : 0;
+  const group = valuePx + gap + unitPx;
+  const xv = Math.max(4, Math.floor((250 - group) / 2));
+  drawText(ctx, value, xv, 34, 4);
+  if (unit) drawText(ctx, unit, xv + valuePx + gap, 50, 2);
+  const trend = clip(c.trend, 30);
+  const xt = Math.max(4, Math.floor((250 - 8 * trend.length) / 2));
+  drawText(ctx, trend, xt, 82, 1);
+  hline(ctx, 100);
+  drawText(ctx, clip(c.footer, 30), 4, 110, 1);
+}
+function renderQr(ctx, c) {
+  drawText(ctx, clip(c.title, 15), 4, 2, 2);
+  hline(ctx, 20);
+  rectOutline(ctx, 8, 26, 90, 90, INK);                   // QR box (x8..98, y26..116)
+  // represent the qr payload as text inside the box (the device encodes a real QR)
+  wrapLines(c.qr_data, 10, 9).forEach(function (ln, i) { drawText(ctx, ln, 11, 30 + 9 * i, 1); });
+  wrapLines(c.caption, 17, 7).forEach(function (ln, i) { drawText(ctx, ln, 104, 30 + 11 * i, 1); });
+}
+
+/* ============================================================
+   Content editor component (live, layout-aware)
+   ============================================================ */
+function contentEditor(initialLayout, initialContent, onInput) {
+  const wrap = el("div", {});
+  let layout = LAYOUTS.indexOf(initialLayout) !== -1 ? initialLayout : "status_card";
+  let seed = initialContent || {};
+  let inputs = {};
+  function render() {
+    wrap.replaceChildren();
+    inputs = {};
+    LAYOUT_FIELDS[layout].forEach(function (f) {
+      let node;
+      if (f.type === "select") {
+        node = selectEl(f.options, (seed[f.k] != null ? seed[f.k] : f.options[0]));
+      } else if (f.type === "textarea") {
+        node = el("textarea", { class: "inp ta", rows: "3" });
+        node.value = seed[f.k] != null ? seed[f.k] : "";
+      } else if (f.type === "lines") {
+        node = el("textarea", { class: "inp ta", rows: "4" });
+        const arr = seed[f.k];
+        node.value = Array.isArray(arr) ? arr.join("\n") : (arr != null ? String(arr) : "");
+      } else {
+        node = el("input", { class: "inp", type: "text" });
+        node.value = seed[f.k] != null ? seed[f.k] : "";
+      }
+      if (onInput) { node.addEventListener("input", onInput); node.addEventListener("change", onInput); }
+      inputs[f.k] = node;
+      wrap.appendChild(field(f.label, node));
+    });
+    // Defer to a microtask: during the caller's synchronous setup the `ed` and
+    // `preview` consts this onInput reads are still in their TDZ. Running it after
+    // the current task lets the initial preview render once they're assigned.
+    if (onInput) queueMicrotask(onInput);
+  }
+  render();
+  return {
+    node: wrap,
+    getLayout: function () { return layout; },
+    setLayout: function (l) { if (LAYOUTS.indexOf(l) !== -1) { layout = l; seed = {}; render(); } },
+    read: function () {
+      const out = {};
+      LAYOUT_FIELDS[layout].forEach(function (f) {
+        const v = inputs[f.k].value;
+        if (f.type === "lines") out[f.k] = v.split("\n").filter(function (s) { return s.trim() !== ""; });
+        else out[f.k] = v;
+      });
+      return out;
+    }
+  };
+}
+
+/* ============================================================
+   Modal system
+   ============================================================ */
+function openModal(titleText, contentNode, opts) {
+  opts = opts || {};
+  const overlay = el("div", { class: "modal-overlay" });
+  const card = el("div", { class: "modal-card" });
+  const close = function () { overlay.remove(); modalCount = Math.max(0, modalCount - 1); document.removeEventListener("keydown", onKey); };
+  const onKey = function (e) { if (e.key === "Escape") close(); };
+  const closeBtn = el("button", { class: "btn btn-icon btn-close", type: "button", "aria-label": "Close", text: "×", onclick: close });
+  card.appendChild(closeBtn);
+  if (opts.kicker) card.appendChild(el("div", { class: "kicker", text: opts.kicker }));
+  card.appendChild(el("div", { class: "modal-title", text: titleText }));
+  card.appendChild(contentNode);
+  overlay.appendChild(card);
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(overlay);
+  modalCount++;
+  return close;
+}
+
+/* ============================================================
+   View switching + auth lifecycle
+   ============================================================ */
+function showGate(errMsg) {
+  stopRefresh();
+  document.getElementById("app").classList.add("hide");
+  const g = document.getElementById("gate");
+  g.classList.remove("hide");
+  document.getElementById("gate-error").textContent = errMsg || "";
+  document.getElementById("gate-token").value = "";
+}
+function showApp() {
+  document.getElementById("gate").classList.add("hide");
+  document.getElementById("app").classList.remove("hide");
+  setTab(state.tab || "dashboard");
+  startRefresh();
+}
+function signOut(msg) {
+  token = "";
+  localStorage.removeItem(TOKEN_KEY);
+  state.devices = [];
+  showGate(msg || "");
+}
+function setTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll(".nav .btn[data-tab]").forEach(function (b) {
+    b.setAttribute("data-active", b.getAttribute("data-tab") === tab ? "1" : "0");
+  });
+  if (tab === "dashboard") loadDashboard();
+  else if (tab === "tokens") loadTokens();
+}
+function startRefresh() {
+  stopRefresh();
+  refreshTimer = setInterval(function () {
+    if (state.tab === "dashboard" && modalCount === 0) loadDashboard(true);
+  }, 10000);
+}
+function stopRefresh() { if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } }
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+async function loadDashboard(silent) {
+  const view = document.getElementById("view");
+  if (!silent) { view.replaceChildren(dashboardHeader(), el("div", { class: "meta", text: "Loading devices…" })); }
+  let data;
+  try { data = await api("/devices"); }
+  catch (e) { if (!silent) view.replaceChildren(dashboardHeader(), errorCard(e)); handleApiError(e); return; }
+  state.devices = (data && data.devices) || [];
+  renderDashboard();
+}
+function dashboardHeader() {
+  return el("div", { class: "section-head" },
+    el("div", {}, el("div", { class: "kicker", text: "fleet" }), el("h2", { text: "Dashboard" })),
+    el("div", { class: "nav" },
+      el("button", { class: "btn", type: "button", text: "Refresh", onclick: function () { loadDashboard(); } }),
+      el("button", { class: "btn btn-primary", type: "button", text: "+ New device", onclick: openNewDevice })
+    )
+  );
+}
+function renderDashboard() {
+  const view = document.getElementById("view");
+  const head = dashboardHeader();
+  if (!state.devices.length) {
+    view.replaceChildren(head, el("div", { class: "empty" },
+      el("strong", { text: "No devices yet" }),
+      el("div", { text: "Create your first device to start sending screens to a Pico ePaper." }),
+      el("div", { style: "margin-top:14px;" }, el("button", { class: "btn btn-primary", type: "button", text: "+ New device", onclick: openNewDevice }))
+    ));
+    return;
+  }
+  const grid = el("div", { class: "grid" });
+  state.devices.forEach(function (d) { grid.appendChild(deviceCard(d)); });
+  view.replaceChildren(head, grid);
+}
+function deviceCard(d) {
+  const tel = d.telemetry || {};
+  const cur = d.current || { layout: "status_card", content: {} };
+
+  const badges = el("div", { class: "badges" });
+  badges.appendChild(el("span", { class: "tag" + (d.online ? "" : " tag-muted"), text: d.online ? "ONLINE" : "offline" }));
+  if (tel.last_batt != null) {
+    const low = Number(tel.last_batt) < 15;
+    badges.appendChild(el("span", { class: "tag" + (low ? " tag-danger" : ""), text: "batt " + tel.last_batt + "%" }));
+  }
+  if (tel.last_rssi != null) badges.appendChild(el("span", { class: "tag tag-muted", text: tel.last_rssi + " dBm" }));
+  if (tel.last_fw) badges.appendChild(el("span", { class: "tag tag-muted", text: "fw " + tel.last_fw }));
+
+  const canvas = el("canvas", { class: "epaper", width: "500", height: "244" });
+  // render after element exists (drawing to the buffer works regardless of attach)
+  renderPreview(canvas, cur.layout, cur.content);
+
+  const sourceLabel = cur.source_event_id ? "live event" : "fallback";
+  const caption = el("div", { class: "screen-caption" });
+  caption.appendChild(document.createTextNode("showing "));
+  caption.appendChild(el("strong", { text: cur.layout }));
+  caption.appendChild(document.createTextNode(" · " + sourceLabel + (cur.priority != null ? " · prio " + cur.priority : "")));
+
+  const foot = el("div", { class: "card-foot" },
+    el("span", { class: "meta", text: "last seen " + relTime(tel.last_seen_at) }),
+    el("span", { class: "pill", text: d.poll_interval_s + "s poll" })
+  );
+
+  const actions = el("div", { class: "actions" },
+    el("button", { class: "btn btn-sm btn-primary", type: "button", text: "Send", onclick: function () { openSendEvent(d); } }),
+    el("button", { class: "btn btn-sm", type: "button", text: "Interval", onclick: function () { openInterval(d); } }),
+    el("button", { class: "btn btn-sm", type: "button", text: "Events", onclick: function () { openEvents(d); } }),
+    el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Delete", onclick: function () { confirmDeleteDevice(d); } })
+  );
+
+  return el("div", { class: "card" },
+    el("div", { class: "kicker", text: "device" }),
+    el("div", { class: "dev-id", text: d.id }),
+    badges,
+    canvas,
+    caption,
+    foot,
+    actions
+  );
+}
+function errorCard(e) {
+  return el("div", { class: "empty" },
+    el("strong", { text: "Could not load" }),
+    el("div", { text: (e && e.message) ? e.message : "Unknown error" })
+  );
+}
+
+/* ============================================================
+   MANAGE: send test event
+   ============================================================ */
+function openSendEvent(d) {
+  const cur = d.current || {};
+  const channels = Array.isArray(d.channels) ? d.channels : [];
+
+  const layoutSel = selectEl(LAYOUTS, LAYOUTS.indexOf(cur.layout) !== -1 ? cur.layout : "status_card");
+  const ed = contentEditor(layoutSel.value, cur.content || {}, updatePreview);
+  layoutSel.addEventListener("change", function () { ed.setLayout(layoutSel.value); updatePreview(); });
+
+  const channelInput = channels.length
+    ? selectEl(channels, channels[0])
+    : el("input", { class: "inp", type: "text", placeholder: "channel name" });
+  const prioInput = el("input", { class: "inp", type: "number", value: "100", min: "0", max: "255" });
+  const ttlInput = el("input", { class: "inp", type: "number", value: "3600", min: "1" });
+  const idInput = el("input", { class: "inp", type: "text", placeholder: "auto-generated if blank" });
+
+  const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
+  function updatePreview() { renderPreview(preview, layoutSel.value, ed.read()); }
+
+  const errBox = el("div", { class: "meta danger" });
+  const sendBtn = el("button", { class: "btn btn-primary", type: "button", text: "Send event" });
+
+  const body = el("div", {},
+    el("div", { class: "kicker", text: "live preview" }),
+    preview,
+    field("Layout", layoutSel),
+    el("div", { class: "two-col" }, field("Channel", channelInput), field("Priority (0–255)", prioInput)),
+    el("div", { class: "two-col" }, field("TTL seconds", ttlInput), field("Event id (optional)", idInput)),
+    ed.node,
+    errBox,
+    el("div", { class: "actions" }, sendBtn)
+  );
+
+  const close = openModal("Send test event — " + d.id, body, { kicker: "manage" });
+
+  sendBtn.addEventListener("click", async function () {
+    errBox.textContent = "";
+    const channel = (channelInput.value || "").trim();
+    if (!channel) { errBox.textContent = "Channel is required."; return; }
+    const payload = {
+      channel: channel,
+      priority: Math.max(0, Math.min(255, Math.round(Number(prioInput.value) || 0))),
+      ttl_seconds: Math.max(1, Math.round(Number(ttlInput.value) || 1)),
+      layout: layoutSel.value,
+      content: ed.read()
+    };
+    const id = (idInput.value || "").trim();
+    if (id) payload.id = id;
+    sendBtn.disabled = true;
+    try {
+      await api("/devices/" + encodeURIComponent(d.id) + "/events", { method: "POST", body: payload });
+      toast("Event sent to " + d.id, "ok");
+      close();
+      loadDashboard(true);
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
+      errBox.textContent = formatDetail(e);
+      sendBtn.disabled = false;
+    }
+  });
+}
+
+/* ============================================================
+   MANAGE: set poll interval
+   ============================================================ */
+function openInterval(d) {
+  const input = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: String(d.poll_interval_s) });
+  const errBox = el("div", { class: "meta danger" });
+  const saveBtn = el("button", { class: "btn btn-primary", type: "button", text: "Save interval" });
+  const body = el("div", {},
+    el("div", { class: "meta", text: "Poll interval is clamped to 30–3600 seconds. Applied on the device's next poll." }),
+    el("div", { style: "height:10px;" }),
+    field("Poll interval (seconds)", input),
+    errBox,
+    el("div", { class: "actions" }, saveBtn)
+  );
+  const close = openModal("Set interval — " + d.id, body, { kicker: "manage" });
+  saveBtn.addEventListener("click", async function () {
+    errBox.textContent = "";
+    const val = Math.round(Number(input.value));
+    if (!isFinite(val)) { errBox.textContent = "Enter a number."; return; }
+    saveBtn.disabled = true;
+    try {
+      const res = await api("/devices/" + encodeURIComponent(d.id) + "/config", { method: "PATCH", body: { poll_interval: val } });
+      toast("Interval set to " + (res && res.poll_interval != null ? res.poll_interval : val) + "s", "ok");
+      close();
+      loadDashboard(true);
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
+      errBox.textContent = formatDetail(e);
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+/* ============================================================
+   MANAGE: events drawer
+   ============================================================ */
+function openEvents(d) {
+  const listWrap = el("div", {}, el("div", { class: "meta", text: "Loading events…" }));
+  const body = el("div", {}, listWrap);
+  openModal("Recent events — " + d.id, body, { kicker: "manage" });
+  loadEventList(d, listWrap);
+}
+async function loadEventList(d, listWrap) {
+  let events;
+  try { events = await api("/devices/" + encodeURIComponent(d.id) + "/events?limit=20"); }
+  catch (e) { listWrap.replaceChildren(el("div", { class: "meta danger", text: formatDetail(e) })); handleApiError(e); return; }
+  events = events || [];
+  if (!events.length) {
+    listWrap.replaceChildren(el("div", { class: "empty" }, el("strong", { text: "No events" }), el("div", { text: "Nothing queued for this device. The fallback screen is showing." })));
+    return;
+  }
+  const container = el("div", {});
+  events.forEach(function (ev) {
+    const tags = el("div", { class: "badges", style: "margin:4px 0 0;" },
+      el("span", { class: "tag tag-muted", text: ev.layout }),
+      el("span", { class: "tag tag-muted", text: "ch " + ev.channel }),
+      el("span", { class: "tag tag-muted", text: "prio " + ev.priority }),
+      el("span", { class: "tag" + (ev.expired ? " tag-danger" : ""), text: ev.expired ? "expired" : inFromNow(ev.expires_at) })
+    );
+    const main = el("div", { class: "row-main" },
+      el("div", { class: "row-title mono", text: ev.id }),
+      el("div", { class: "meta", text: "received " + relTime(ev.received_at) + " · ttl " + ev.ttl_seconds + "s" }),
+      tags
+    );
+    const delBtn = el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Delete" });
+    delBtn.addEventListener("click", async function () {
+      delBtn.disabled = true;
+      try {
+        await api("/devices/" + encodeURIComponent(d.id) + "/events/" + encodeURIComponent(ev.id), { method: "DELETE" });
+        toast("Event removed", "ok");
+        loadEventList(d, listWrap);
+        loadDashboard(true);
+      } catch (e) { handleApiError(e, "Delete event"); delBtn.disabled = false; }
+    });
+    container.appendChild(el("div", { class: "row" }, main, delBtn));
+  });
+  listWrap.replaceChildren(container);
+}
+
+/* ============================================================
+   DEVICES: create + delete
+   ============================================================ */
+function openNewDevice() {
+  const idInput = el("input", { class: "inp", type: "text", placeholder: "e.g. kitchen-01" });
+  const channelsInput = el("input", { class: "inp", type: "text", placeholder: "comma-separated, e.g. home.status, alerts" });
+  const pollInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: "120" });
+  const lowBattInput = el("input", { class: "inp", type: "number", min: "30", value: "600" });
+
+  const layoutSel = selectEl(LAYOUTS, "status_card");
+  const ed = contentEditor("status_card", {}, updatePreview);
+  layoutSel.addEventListener("change", function () { ed.setLayout(layoutSel.value); updatePreview(); });
+  const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
+  function updatePreview() { renderPreview(preview, layoutSel.value, ed.read()); }
+
+  const errBox = el("div", { class: "meta danger" });
+  const createBtn = el("button", { class: "btn btn-primary", type: "button", text: "Create device" });
+
+  const body = el("div", {},
+    field("Device id", idInput),
+    field("Channels", channelsInput),
+    el("div", { class: "two-col" }, field("Poll interval (s)", pollInput), field("Low-batt interval (s)", lowBattInput)),
+    el("div", { class: "kicker", text: "fallback screen" }),
+    el("div", { class: "meta", text: "Shown when no live event is active. Validated against the layout schema." }),
+    el("div", { style: "height:8px;" }),
+    preview,
+    field("Fallback layout", layoutSel),
+    ed.node,
+    errBox,
+    el("div", { class: "actions" }, createBtn)
+  );
+
+  const close = openModal("New device", body, { kicker: "devices" });
+
+  createBtn.addEventListener("click", async function () {
+    errBox.textContent = "";
+    const id = (idInput.value || "").trim();
+    if (!id) { errBox.textContent = "Device id is required."; return; }
+    const channels = (channelsInput.value || "").split(",").map(function (s) { return s.trim(); }).filter(function (s) { return s !== ""; });
+    const payload = {
+      id: id,
+      channels: channels,
+      fallback: { layout: layoutSel.value, content: ed.read() },
+      poll_interval_s: Math.max(30, Math.min(3600, Math.round(Number(pollInput.value) || 120))),
+      low_batt_interval_s: Math.max(30, Math.round(Number(lowBattInput.value) || 600))
+    };
+    createBtn.disabled = true;
+    try {
+      await api("/devices", { method: "POST", body: payload });
+      toast("Device " + id + " created", "ok");
+      close();
+      loadDashboard();
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
+      errBox.textContent = e.status === 409 ? "A device with that id already exists." : formatDetail(e);
+      createBtn.disabled = false;
+    }
+  });
+}
+function confirmDeleteDevice(d) {
+  const errBox = el("div", { class: "meta danger" });
+  const delBtn = el("button", { class: "btn btn-danger", type: "button", text: "Delete device" });
+  const body = el("div", {},
+    el("div", { class: "meta", text: "This permanently deletes the device, its tokens, and all of its events. This cannot be undone." }),
+    el("div", { style: "height:14px;" }),
+    errBox,
+    el("div", { class: "actions" }, delBtn)
+  );
+  const close = openModal("Delete " + d.id + "?", body, { kicker: "danger" });
+  delBtn.addEventListener("click", async function () {
+    delBtn.disabled = true;
+    try {
+      await api("/devices/" + encodeURIComponent(d.id), { method: "DELETE" });
+      toast("Device " + d.id + " deleted", "ok");
+      close();
+      loadDashboard();
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
+      errBox.textContent = formatDetail(e);
+      delBtn.disabled = false;
+    }
+  });
+}
+
+/* ============================================================
+   TOKENS
+   ============================================================ */
+async function loadTokens() {
+  const view = document.getElementById("view");
+  const head = el("div", { class: "section-head" },
+    el("div", {}, el("div", { class: "kicker", text: "credentials" }), el("h2", { text: "Tokens" })),
+    el("div", { class: "nav" },
+      el("button", { class: "btn", type: "button", text: "Refresh", onclick: loadTokens }),
+      el("button", { class: "btn btn-primary", type: "button", text: "+ Mint token", onclick: openMintToken })
+    )
+  );
+  view.replaceChildren(head, el("div", { class: "meta", text: "Loading tokens…" }));
+  let tokens;
+  try { tokens = await api("/tokens"); }
+  catch (e) { view.replaceChildren(head, errorCard(e)); handleApiError(e); return; }
+  tokens = tokens || [];
+  if (!tokens.length) {
+    view.replaceChildren(head, el("div", { class: "empty" },
+      el("strong", { text: "No tokens" }),
+      el("div", { text: "Mint a device token for a Pico to poll, or an ingest token for a webhook to push events." }),
+      el("div", { style: "margin-top:14px;" }, el("button", { class: "btn btn-primary", type: "button", text: "+ Mint token", onclick: openMintToken }))
+    ));
+    return;
+  }
+  const card = el("div", { class: "card" });
+  tokens.forEach(function (t) {
+    const tags = el("div", { class: "badges", style: "margin:4px 0 0;" },
+      el("span", { class: "tag", text: t.kind }),
+      el("span", { class: "tag tag-muted", text: "dev " + t.device_id }),
+      el("span", { class: "tag tag-muted", text: "rate " + (t.rate_per_min != null ? t.rate_per_min : "?") + "/min" }),
+      el("span", { class: "tag tag-muted", text: (t.channels && t.channels.length) ? "ch " + t.channels.join(", ") : "all channels" })
+    );
+    const main = el("div", { class: "row-main" },
+      el("div", { class: "row-title mono", text: t.token_preview || "(preview unavailable)" }),
+      tags
+    );
+    const revokeBtn = el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Revoke" });
+    revokeBtn.addEventListener("click", async function () {
+      revokeBtn.disabled = true;
+      try {
+        await api("/tokens/" + encodeURIComponent(t.id), { method: "DELETE" });
+        toast("Token revoked", "ok");
+        loadTokens();
+      } catch (e) { handleApiError(e, "Revoke"); revokeBtn.disabled = false; }
+    });
+    card.appendChild(el("div", { class: "row" }, main, revokeBtn));
+  });
+  view.replaceChildren(head, card);
+}
+function openMintToken() {
+  const kindSel = selectEl(["device", "ingest"], "device");
+  const deviceField = Array.isArray(state.devices) && state.devices.length
+    ? selectEl(state.devices.map(function (d) { return d.id; }), state.devices[0].id)
+    : el("input", { class: "inp", type: "text", placeholder: "device id" });
+  const channelsInput = el("input", { class: "inp", type: "text", placeholder: "comma-separated, blank = all channels" });
+  const rateInput = el("input", { class: "inp", type: "number", min: "1", placeholder: "default 60" });
+
+  const channelsField = field("Channels (ingest only)", channelsInput);
+  function syncKind() { channelsField.style.display = (kindSel.value === "ingest") ? "" : "none"; }
+  kindSel.addEventListener("change", syncKind);
+
+  const errBox = el("div", { class: "meta danger" });
+  const mintBtn = el("button", { class: "btn btn-primary", type: "button", text: "Mint token" });
+
+  const body = el("div", {},
+    field("Kind", kindSel),
+    field("Device", deviceField),
+    channelsField,
+    field("Rate per minute (optional)", rateInput),
+    errBox,
+    el("div", { class: "actions" }, mintBtn)
+  );
+  syncKind();
+
+  const close = openModal("Mint token", body, { kicker: "credentials" });
+
+  mintBtn.addEventListener("click", async function () {
+    errBox.textContent = "";
+    const deviceId = (deviceField.value || "").trim();
+    if (!deviceId) { errBox.textContent = "Device id is required."; return; }
+    const payload = { kind: kindSel.value, device_id: deviceId };
+    if (kindSel.value === "ingest") {
+      const ch = (channelsInput.value || "").split(",").map(function (s) { return s.trim(); }).filter(function (s) { return s !== ""; });
+      payload.channels = ch.length ? ch : null;
+    }
+    const rate = rateInput.value.trim();
+    if (rate !== "") payload.rate_per_min = Math.max(1, Math.round(Number(rate) || 60));
+    mintBtn.disabled = true;
+    try {
+      const res = await api("/tokens", { method: "POST", body: payload });
+      close();
+      openTokenReveal(res);
+      loadTokens();
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
+      errBox.textContent = formatDetail(e);
+      mintBtn.disabled = false;
+    }
+  });
+}
+function openTokenReveal(res) {
+  const tokenValue = (res && res.token) || "";
+  const box = el("div", { class: "reveal", text: tokenValue });
+  const copyBtn = el("button", { class: "btn btn-primary", type: "button", text: "Copy token" });
+  copyBtn.addEventListener("click", function () { copyText(tokenValue); });
+  const body = el("div", {},
+    el("div", { class: "meta", text: "Token id: " + ((res && res.id) || "?") }),
+    box,
+    el("div", { class: "meta danger", text: "Copy this now. It is shown ONCE and can never be retrieved again — only its hash is stored." }),
+    el("div", { class: "actions" }, copyBtn)
+  );
+  openModal("Token minted", body, { kicker: "secret · shown once" });
+}
+async function copyText(t) {
+  try {
+    await navigator.clipboard.writeText(t);
+    toast("Copied to clipboard", "ok");
+  } catch (e) {
+    toast("Copy failed — select the text and copy manually", "err");
+  }
+}
+
+/* ============================================================
+   Misc
+   ============================================================ */
+function formatDetail(e) {
+  if (!e) return "Unknown error";
+  if (Array.isArray(e.detail)) {
+    return e.detail.map(function (d) {
+      const loc = Array.isArray(d.loc) ? d.loc.join(".") : "";
+      return (loc ? loc + ": " : "") + (d.msg || "");
+    }).join("; ") || e.message;
+  }
+  return e.message || "Request failed";
+}
+
+/* ============================================================
+   Boot
+   ============================================================ */
+document.getElementById("gate-form").addEventListener("submit", function (e) {
+  e.preventDefault();
+  const val = document.getElementById("gate-token").value.trim();
+  if (!val) { document.getElementById("gate-error").textContent = "Enter a token."; return; }
+  token = val;
+  localStorage.setItem(TOKEN_KEY, token);
+  // validate by attempting a load; showApp -> setTab -> loadDashboard handles 401/503.
+  document.getElementById("gate-error").textContent = "";
+  showApp();
+});
+document.getElementById("signout").addEventListener("click", function () { signOut(""); });
+document.querySelectorAll(".nav .btn[data-tab]").forEach(function (b) {
+  b.addEventListener("click", function () { setTab(b.getAttribute("data-tab")); });
+});
+
+if (token) showApp(); else showGate("");
+</script>
+</body>
+</html>

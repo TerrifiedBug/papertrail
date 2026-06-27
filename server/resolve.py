@@ -78,6 +78,7 @@ class Resolution:
     priority: Optional[int]          # None when fallback
     etag: str
     control: Optional[dict[str, Any]] = None   # {"poll_interval": N}
+    received_at: Optional[int] = None          # epoch the winning event was ingested
 
     def to_response(self, rendered_at: Optional[int] = None) -> dict[str, Any]:
         """The GET /current JSON body. ``rendered_at`` is informational and NOT
@@ -91,6 +92,7 @@ class Resolution:
             "control": self.control,
             "source_event_id": self.source_event_id,
             "priority": self.priority,
+            "received_at": self.received_at,
             "etag": self.etag,
             "rendered_at": int(time.time()) if rendered_at is None else rendered_at,
         }
@@ -105,7 +107,8 @@ def resolve_from_events(
     candidates = [
         e
         for e in events
-        if e.channel in subscribed and now < (e.received_at + e.ttl_seconds)
+        if e.channel in subscribed
+        and (e.ttl_seconds is None or e.ttl_seconds <= 0 or now < e.received_at + e.ttl_seconds)
     ]
 
     if not candidates:
@@ -139,6 +142,7 @@ def resolve_from_events(
         source_event_id=chosen.id,
         priority=chosen.priority,
         control=control,
+        received_at=chosen.received_at,
         etag=compute_etag(device.id, chosen.layout, chosen.content, control),
     )
 
