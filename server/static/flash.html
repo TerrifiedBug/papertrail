@@ -243,11 +243,18 @@ async function uploadFirmware(token){
     const bytes=new Uint8Array(await (await fwFetch("/file?path="+encodeURIComponent(p), token)).arrayBuffer());
     const got=await sha256hex(bytes);
     if(got!==files[p]) throw new Error("sha256 mismatch for "+p+" (manifest "+files[p]+", got "+got+")");
-    const code=
-      "import ubinascii, os\n"+
-      "open("+JSON.stringify(p)+",'wb').write(ubinascii.a2b_base64("+JSON.stringify(bytesToB64(bytes))+"))\n"+
-      "print('WROTE', "+JSON.stringify(p)+", os.stat("+JSON.stringify(p)+")[6])\n";
-    log(await rawExec(code, 30000) || ("wrote "+p));
+    // Stream the write in ~4KB chunks: open once, append decoded base64 per chunk
+    // so the device never allocates a whole-file base64 blob at once (that 49KB
+    // alloc is the MemoryError on a fragmented ~256KB heap). _pf persists across
+    // raw-REPL execs (same global scope).
+    await rawExec("import ubinascii\n_pf=open("+JSON.stringify(p)+",'wb')\n");
+    const CH=4096;
+    for(let i=0;i<bytes.length;i+=CH){
+      const cb=bytesToB64(bytes.subarray(i,i+CH));
+      await rawExec("_pf.write(ubinascii.a2b_base64("+JSON.stringify(cb)+"))\n");
+    }
+    const sz=(await rawExec("_pf.close()\nimport os\nprint(os.stat("+JSON.stringify(p)+")[6])\n")||"").trim();
+    log("wrote "+p+" ("+(sz||bytes.length)+" bytes)");
   }
   // seed manifest.json (the version + files we just fetched) -> first OTA check no-op
   const manJson=JSON.stringify({version:man.version, files:files});
