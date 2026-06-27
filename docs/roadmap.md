@@ -86,6 +86,12 @@ same commit as the admin GUI.
   - **Interrupted-apply reconcile:** on a power cut mid-rename, the on-disk bytes no longer
     match the local manifest; the next delta plan is wrong. Detect a leftover `pending_fw.txt`
     at `apply()` start and reconcile (restore `/backup` first) before planning.
+  - **Stream the OTA download (memory):** `ota.py` buffers each file via `resp.content`
+    (whole file in RAM) before hashing/writing — a ~36KB file (`uQR.py`) can MemoryError on
+    the Pico's fragmented ~256KB heap (the web flasher already hit this and now chunks at 4KB).
+    Fix `ota.apply()` to stream the `urequests` body in chunks: incremental `sha256.update()`
+    + chunked `f.write()`, never holding the whole file. (Rare in practice — deltas pull 1–2
+    files on a freer fresh-boot heap — but the same bug class.)
   - **Heal a latched crash-counter:** the flasher should zero `boot_count.txt` when laying
     down firmware (a no-backup crash-loop currently latches the counter high). Clear
     `pending_fw.txt` on the recovery paths; only zero the counter when a restore actually wrote.
