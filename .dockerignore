@@ -1,0 +1,45 @@
+# Docker build context = repo root (see .github/workflows/docker-publish.yml and
+# server/docker-compose.yml: context is `.`/`..`, Dockerfile COPYs server/ + firmware/).
+#
+# --- Secrets (NEVER bake a device-local secret into the image) ---
+# The bundled firmware dir is COPY'd wholesale; a real firmware/secrets.py on the
+# build host would otherwise be baked in and served. Only *.example.* templates ship.
+firmware/secrets.py
+**/secrets.py
+secrets.py
+.env
+.env.*
+!secrets.example.py
+!.env.example
+
+# --- Local state / databases (never ship a dev sqlite db) ---
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+
+# --- Python build noise ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- VCS / editor / OS cruft ---
+.git/
+.github/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.log

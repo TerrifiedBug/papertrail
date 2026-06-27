@@ -29,11 +29,19 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
-from .auth import AuthError, RateLimiter, authenticate, authorize_channel, parse_bearer
+from .auth import (
+    AuthError,
+    RateLimiter,
+    authenticate,
+    authorize_channel,
+    lookup_token,
+    parse_bearer,
+)
+from .firmware_manifest import build_manifest
 from .resolve import current
 from .schema import CONTENT_MODELS, SCHEMA_VERSION, validate_envelope, validate_fallback
 from .store import EventRow, Store, sha256_hex
@@ -50,6 +58,11 @@ _FW_RE = re.compile(r"^[A-Za-z0-9._-]+$")   # telemetry fw charset
 # RateLimiter). Generous enough never to impede legitimate dashboard use.
 ADMIN_FAIL_PER_MIN = 30
 
+# Provisioning templates the flasher may fetch for a brand-new Pico (SEPARATE from
+# the OTA manifest, which deliberately excludes device-local config.py). A strict
+# allowlist of bare filenames -> no traversal, never serves real secrets.py.
+_PROVISION_FILES = frozenset({"config.py", "secrets.example.py"})
+
 # The admin frontend lives here (the page is written by the frontend agent).
 # Served WITHOUT auth (it carries no data); /static/* assets likewise.
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -59,6 +72,15 @@ _TAGS_METADATA = [
     {"name": "ingest", "description": "POST webhook events into the bridge (ingest token)."},
     {"name": "device", "description": "Pico-facing screen poll + remote device control (device token)."},
     {"name": "telemetry", "description": "Stored device telemetry for the dashboard (device token)."},
+    {
+        "name": "firmware",
+        "description": (
+            "Bridge-served firmware bundle for pull/delta OTA. Auth accepts ANY "
+            "valid device token OR the admin token. The bridge hashes the bundled "
+            "firmware at startup; devices diff the manifest and pull only changed "
+            "files (each verified by sha256)."
+        ),
+    },
     {"name": "ops", "description": "Operational / liveness endpoints (no auth)."},
     {
         "name": "admin",
@@ -130,7 +152,7 @@ _CURRENT_EXAMPLE = {
         "lines": ["No active messages"],
         "footer": "papertrail",
     },
-    "control": {"poll_interval": 120},
+    "control": {"poll_interval": 120, "fw": "a1b2c3d4e5f6"},
     "source_event_id": None,
     "priority": None,
     "etag": "c0ffee...",
@@ -165,6 +187,7 @@ def create_app(
     seed: Optional[dict[str, Any]] = None,
     max_body_bytes: Optional[int] = None,
     admin_token: Optional[str] = None,
+    firmware_dir: Optional[str] = None,
 ) -> FastAPI:
     db_path = db_path or os.environ.get("PAPERTRAIL_DB", "papertrail.db")
     max_body = int(
@@ -185,6 +208,11 @@ def create_app(
     limiter = RateLimiter()
     admin_fail = RateLimiter()   # keyed on client host; throttles bad admin auth
 
+    # Hash the bundled firmware ONCE at construction (the bundle is static at
+    # runtime). version flips whenever any included file changes. firmware_dir
+    # (when passed) overrides PAPERTRAIL_FIRMWARE_DIR; None -> the env/default.
+    firmware = build_manifest(firmware_dir)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         store.init_db()
@@ -203,6 +231,7 @@ def create_app(
     app.state.limiter = limiter
     app.state.max_body_bytes = max_body
     app.state.admin_enabled = admin_token is not None
+    app.state.firmware = firmware
 
     # Serve the admin frontend + its assets WITHOUT auth (it carries no data;
     # the page prompts for the admin token and sends it on /api/admin/* fetches).
@@ -246,6 +275,42 @@ def create_app(
         if not admin_fail.allow(f"admin-fail:{client}", ADMIN_FAIL_PER_MIN):
             raise HTTPException(status_code=429, detail="too many admin auth failures")
         raise HTTPException(status_code=401, detail="invalid or missing admin token")
+
+    def _require_device_or_admin(request: Request):
+        """Gate the firmware bundle on EITHER any valid device token OR the admin
+        token (the contract: a device fetching its update, or an admin/flasher).
+
+        401 missing/malformed/unknown token; 403 a valid token of the wrong kind
+        (e.g. an ingest token); 429 after too many failed attempts from one client
+        (brute-force speed bump, mirroring _require_admin -> the shared admin_fail
+        limiter). The admin token is matched with a constant-time sha256 compare
+        (same pattern as _require_admin); when admin_token is unset only device
+        tokens pass.
+
+        Returns the device ``TokenRow`` (so the caller can per-token rate limit),
+        or ``None`` when authed via the admin token (trusted, no token bucket)."""
+
+        def _fail(status: int, detail: str):
+            # Throttle repeated failures from one client before surfacing the
+            # status (per-process best-effort, like _require_admin).
+            client = request.client.host if request.client else "unknown"
+            if not admin_fail.allow(f"fw-fail:{client}", ADMIN_FAIL_PER_MIN):
+                raise HTTPException(status_code=429, detail="too many auth failures")
+            raise HTTPException(status_code=status, detail=detail)
+
+        presented = parse_bearer(request.headers.get("authorization"))
+        if presented is None:
+            _fail(401, "missing or malformed bearer token")
+        if admin_token and hmac.compare_digest(
+            sha256_hex(presented), sha256_hex(admin_token)
+        ):
+            return None
+        token = lookup_token(store, presented)
+        if token is None:
+            _fail(401, "unknown token")
+        if token.kind != "device":
+            _fail(403, "token is not a device token")
+        return token
 
     async def _admin_json_body(request: Request) -> Any:
         """Read + parse an admin request body under the SAME hard size cap as the
@@ -423,8 +488,10 @@ def create_app(
             last_uptime=_qp_uptime(up),
         )
 
-        # 5. resolve current screen (lazy TTL) + ETag (the hash covers control)
-        resolution = current(store, device)
+        # 5. resolve current screen (lazy TTL) + ETag. control.fw advertises the
+        #    latest firmware version so OTA rides this poll; fw is kept OUT of the
+        #    ETag hash (like rendered_at) so a firmware bump never churns the 304.
+        resolution = current(store, device, fw_version=firmware.version)
         etag = resolution.etag
         etag_header = f'"{etag}"'
 
@@ -516,7 +583,94 @@ def create_app(
             "poll_interval": device.poll_interval_s,
         }
 
+    # --- firmware bundle (pull / delta OTA) -------------------------------------
+
+    @app.get(
+        "/api/firmware/manifest",
+        tags=["firmware"],
+        responses={
+            200: {
+                "description": "Firmware version + per-file sha256 map.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "version": "a1b2c3d4e5f6",
+                            "files": {
+                                "main.py": "…64 hex…",
+                                "lib/uQR.py": "…64 hex…",
+                            },
+                        }
+                    }
+                },
+            }
+        },
+    )
+    async def firmware_manifest(request: Request):
+        """The bundled firmware manifest hashed at startup. Auth: any valid device
+        token OR the admin token. The device diffs this against its last-applied
+        manifest.json and pulls only the files whose sha changed."""
+        token = _require_device_or_admin(request)
+        if token is not None:
+            _rate_limit(token)   # per-device-token bucket (admin token is exempt)
+        return firmware.to_dict()
+
+    @app.get("/api/firmware/file", tags=["firmware"])
+    async def firmware_file(
+        request: Request,
+        path: Optional[str] = Query(
+            None, description="a path that is a key in the firmware manifest"
+        ),
+    ):
+        """Raw bytes of ONE firmware file. Auth: any valid device token OR the
+        admin token. ``path`` MUST be a manifest key — anything else (missing,
+        ``..``/absolute/traversal, unknown) is rejected (400/404), never read
+        off-bundle."""
+        token = _require_device_or_admin(request)
+        if token is not None:
+            _rate_limit(token)   # per-device-token bucket (admin token is exempt)
+        if not path:
+            raise HTTPException(status_code=400, detail="path query param required")
+        full = firmware.abspath(path)
+        if full is None or not os.path.isfile(full):
+            raise HTTPException(status_code=404, detail="unknown firmware file")
+        return FileResponse(full, media_type="application/octet-stream")
+
+    @app.get("/api/firmware/provision-file", tags=["firmware"])
+    async def firmware_provision_file(
+        request: Request,
+        path: Optional[str] = Query(
+            None,
+            description="a provisioning template name: config.py or secrets.example.py",
+        ),
+    ):
+        """Serve a device-local PROVISIONING TEMPLATE from the firmware dir, for a
+        brand-new Pico that has no config.py yet (config.py is intentionally NOT in
+        the OTA manifest, so the flasher cannot pull+patch it). This is SEPARATE
+        from the OTA bundle: ``path`` must be in a tiny fixed allowlist
+        (``config.py`` / ``secrets.example.py``) — anything else is 404. Auth: any
+        valid device token OR the admin token (same gate as the OTA endpoints)."""
+        token = _require_device_or_admin(request)
+        if token is not None:
+            _rate_limit(token)   # per-device-token bucket (admin token is exempt)
+        if not path or path not in _PROVISION_FILES:
+            raise HTTPException(status_code=404, detail="unknown provisioning file")
+        # Allowlist names carry no slashes, so no traversal is possible; realpath +
+        # containment is belt-and-braces (and resolves any symlinked bundle root).
+        root = os.path.realpath(firmware.root)
+        full = os.path.realpath(os.path.join(root, path))
+        if full != root and not full.startswith(root + os.sep):
+            raise HTTPException(status_code=404, detail="unknown provisioning file")
+        if not os.path.isfile(full):
+            raise HTTPException(status_code=404, detail="provisioning file not found")
+        return FileResponse(full, media_type="text/x-python; charset=utf-8")
+
     # --- admin frontend ---------------------------------------------------------
+
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        """LAN-internal convenience: the bare root lands on the dashboard. 307 keeps
+        the method (the dashboard is GET-only anyway). Not part of the public API."""
+        return RedirectResponse("/admin", status_code=307)
 
     @app.get("/admin", include_in_schema=False)
     async def admin_page():
@@ -545,6 +699,15 @@ def create_app(
                 status_code=200,
             )
         return FileResponse(path, media_type="text/html")
+
+    # --- admin API: firmware ----------------------------------------------------
+
+    @app.get("/api/admin/firmware", tags=["admin"])
+    async def admin_firmware(request: Request):
+        """Latest bundled firmware version (admin) — the dashboard shows this and
+        highlights any device whose last_fw is out of date."""
+        _require_admin(request)
+        return {"version": firmware.version}
 
     # --- admin API: devices -----------------------------------------------------
 

@@ -34,6 +34,11 @@ except ImportError:
     machine = None
     _HW = False
 
+try:
+    import utime as time
+except ImportError:                  # host (py_compile / import) -- stdlib time
+    import time
+
 # Sentinels stored in place of a real ETag so we don't redraw an unchanged
 # offline/low-battery screen every wake.
 LOWBATT_SENTINEL = "__lowbatt__"
@@ -86,6 +91,27 @@ def save_interval(seconds):
     try:
         with open(config.INTERVAL_FILE, "w") as f:
             f.write(str(int(seconds)))
+    except Exception:
+        pass
+
+
+# --- crash-loop counter (boot.py's recovery guard increments it each boot) ------
+def load_boot_count():
+    try:
+        with open(config.BOOT_COUNT_FILE) as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+
+
+def clear_boot_count():
+    """Zero the crash-loop counter after ONE fully-successful cycle -> tells boot.py
+    'this firmware works'. Only writes when non-zero (flash-wear: a deepsleep wake
+    re-runs boot.py which sets it to 1, so we write 0 once per healthy wake)."""
+    try:
+        if load_boot_count() != 0:
+            with open(config.BOOT_COUNT_FILE, "w") as f:
+                f.write("0")
     except Exception:
         pass
 
@@ -183,14 +209,30 @@ def cycle(panel, last_etag, interval_pref):
         wifi_ok = wifi.connect(secrets.WIFI_SSID, secrets.WIFI_PASSWORD)
         if wifi_ok:
             import poller
+            import ota
+            local_fw = ota.local_version()      # local manifest version, else None
             telemetry = {
                 "batt": pct,                    # None if the gauge couldn't be read
                 "rssi": wifi.rssi(),            # None if unavailable -> omitted
-                "fw": config.FW_VERSION,
+                "fw": local_fw or config.FW_VERSION,   # report the running version
                 "up": _uptime_s(),
             }
             result = poller.poll(_server_url(secrets), _device_id(secrets),
                                  secrets.DEVICE_TOKEN, poll_etag, telemetry)
+
+            # OTA rides the existing poll (zero extra cost until an update waits):
+            # only when the server advertises a DIFFERENT fw do we run ota.apply(),
+            # and we do it HERE -- inside the wifi try, radio still up -- so the
+            # download can happen. apply() verifies every file's sha and resets on
+            # success (never returns); ANY failure is fully guarded so a bad OTA
+            # logs + carries on to render/sleep rather than bricking the cycle.
+            if result is not None and ota.should_update(result.get("control_fw"),
+                                                        local_fw):
+                try:
+                    print("ota: update", local_fw, "->", result.get("control_fw"))
+                    ota.apply(_server_url(secrets), secrets.DEVICE_TOKEN)
+                except Exception as e:
+                    print("ota: apply failed (continuing):", e)
     finally:
         wifi.disconnect()                       # radio off before any draw / sleep
 
@@ -247,17 +289,32 @@ def main():
 
     while True:
         prev_pref = interval_pref
+        cycle_ok = False
         try:
             last_etag, sleep_s, interval_pref, use_deep = cycle(panel, last_etag, interval_pref)
+            cycle_ok = True
         except Exception as e:
+            # A cycle() crash must ADVANCE the recovery path, not retry forever in
+            # place: draw the offline screen, then machine.reset() so boot.py's
+            # boot-count climbs and the crash-loop guard can heal a bad OTA. A short
+            # delay leaves a Ctrl-C window for a dev at the REPL (KeyboardInterrupt is
+            # BaseException, so it escapes this `except Exception` and drops to REPL).
             print("cycle error:", e)
             try:
                 panel.draw(render.draw_offline, "err: " + str(e))
             except Exception:
                 pass
-            last_etag = OFFLINE_SENTINEL
-            sleep_s = interval_pref      # unchanged on this error path
-            use_deep = False             # error path: lightsleep so the REPL stays reachable
+            panel.rest()                 # zero-power before the reset; image retained
+            if _HW:
+                time.sleep(3)            # ~3s Ctrl-C window for a dev at the REPL
+                machine.reset()          # -> boot.py increments boot_count -> guard heals
+            return                       # off-hardware only (device resets above)
+
+        # One clean cycle -> the running firmware works: clear boot.py's crash-loop
+        # counter. Only on the no-exception path, so a firmware that keeps throwing
+        # lets the counter climb (across deepsleep resets) until the guard restores.
+        if cycle_ok:
+            clear_boot_count()
 
         # Persist the cadence only when the server actually changed it (flash wear).
         if interval_pref != prev_pref:

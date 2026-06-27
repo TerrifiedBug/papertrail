@@ -31,6 +31,12 @@
   button.ghost{background:var(--paper); color:var(--ink);}
   button.big{font-size:16px; width:100%; padding:15px;}
   button:disabled{opacity:.45; cursor:not-allowed;}
+  a.btn,.btn{display:inline-flex; align-items:center; justify-content:center; gap:6px;
+        font:inherit; font-size:14px; font-weight:600; border:1.5px solid var(--ink);
+        border-radius:999px; background:var(--card); color:var(--ink);
+        padding:9px 16px; text-decoration:none; cursor:pointer;}
+  a.btn:active,.btn:active{transform:translateY(1px);}
+  .topbar{margin-bottom:14px;}
   .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px;}
   .pill{display:inline-flex; border:1.5px solid var(--ink); border-radius:999px; padding:7px 12px; font-size:13px; background:var(--card);}
   .pill.ok{border-color:var(--ok); color:var(--ok);}
@@ -46,11 +52,12 @@
 </head>
 <body>
 <div class="wrap">
+  <div class="topbar"><a class="btn" href="/admin">← Dashboard</a></div>
   <div class="kicker">device provisioning · web serial</div>
   <h1>paper<br>flash</h1>
   <div class="sub hint">
     Name a device, enter WiFi, hit provision — it creates the device, mints a token,
-    writes the Pico's <code>secrets.py</code> over USB, and reboots. No copy-paste.
+    pulls the latest firmware, writes the Pico's <code>secrets.py</code> over USB, and reboots. No copy-paste.
     <a href="/admin">← dashboard</a>
   </div>
 
@@ -93,6 +100,11 @@
         <input id="channels" placeholder="home.status, home.alerts, home.tasks">
         <div class="hint">Defaults to <code>home.status, home.alerts, home.tasks</code>. Edit anytime in the dashboard.</div>
       </details>
+      <label for="uploadFw" style="display:flex; align-items:center; gap:10px; margin-top:16px; color:var(--ink); font-size:15px; cursor:pointer">
+        <input id="uploadFw" type="checkbox" checked style="width:18px; height:18px; padding:0; margin:0; border:0; accent-color:var(--ink); flex:none">
+        Upload latest firmware too
+      </label>
+      <div class="hint">Pulls the bridge's current firmware over USB and seeds <code>manifest.json</code> so the device boots already up-to-date (its first OTA check is a no-op). <b>Needed for a fresh Pico.</b> Untick to write config only when re-provisioning a device that already has firmware.</div>
     </div>
 
     <div class="card">
@@ -166,8 +178,8 @@ async function connect(){
   clearRx(); await send("\r\x03\x03"); await sleep(200); log("interrupted running program (Ctrl-C)");
 }
 async function rawEnter(){ clearRx(); await send("\r\x01"); await waitFor("raw REPL; CTRL-B to exit"); await waitFor(">"); }
-async function rawExec(code){
-  clearRx(); await send(code); await send("\x04"); await waitFor("\x04>");
+async function rawExec(code, ms){
+  clearRx(); await send(code); await send("\x04"); await waitFor("\x04>", ms);
   const parts=rxbuf.split("\x04");
   const stderr=(parts[1]||"").trim();
   if(stderr) throw new Error(stderr);
@@ -189,6 +201,63 @@ function buildSecrets(c){
   ].join("\n");
 }
 function b64utf8(s){ return btoa(unescape(encodeURIComponent(s))); }
+
+// --- firmware OTA upload (PULL the bridge's current firmware over the raw REPL) -
+// Auth = the just-minted DEVICE token (the firmware endpoints accept any valid
+// device token OR the admin token). Files are pulled + hashed by the bridge as raw
+// bytes, so we base64 the bytes (never decode them as text — uQR/binary-safe).
+async function fwFetch(path, token){
+  const r=await fetch("/api/firmware"+path,{headers:{"Authorization":"Bearer "+token}});
+  if(!r.ok){ const e=new Error("firmware "+r.status+" for "+path); e.status=r.status; throw e; }
+  return r;
+}
+function bytesToB64(bytes){
+  let s=""; const chunk=0x8000;
+  for(let i=0;i<bytes.length;i+=chunk){ s+=String.fromCharCode.apply(null, bytes.subarray(i,i+chunk)); }
+  return btoa(s);
+}
+// sha256 hex of a byte buffer (Web Crypto; secure context already required).
+// Mirrors ota.verify on the device: we never write a file we can't positively
+// match against the manifest's advertised sha.
+async function sha256hex(bytes){
+  const d = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+// Pull manifest + every file, write each atomically, then seed manifest.json so the
+// device's first OTA check is a no-op. Must run inside an active raw REPL session.
+async function uploadFirmware(token){
+  log("fetching firmware manifest…");
+  const man=await (await fwFetch("/manifest", token)).json();
+  const files=man.files||{};
+  const paths=Object.keys(files);
+  log("manifest "+man.version+" — "+paths.length+" files");
+  // make parent dirs first (e.g. 'lib'), guarded — os.mkdir raises OSError if it exists
+  const dirs=new Set();
+  for(const p of paths){ const i=p.lastIndexOf("/"); if(i>0) dirs.add(p.slice(0,i)); }
+  for(const d of dirs){
+    await rawExec("import os\ntry:\n    os.mkdir("+JSON.stringify(d)+")\nexcept OSError:\n    pass\n");
+  }
+  // pull each file -> verify sha256 against the manifest BEFORE writing (mirror
+  // ota.verify) -> base64 -> write on device (generous timeout for bigger blobs)
+  for(const p of paths){
+    const bytes=new Uint8Array(await (await fwFetch("/file?path="+encodeURIComponent(p), token)).arrayBuffer());
+    const got=await sha256hex(bytes);
+    if(got!==files[p]) throw new Error("sha256 mismatch for "+p+" (manifest "+files[p]+", got "+got+")");
+    const code=
+      "import ubinascii, os\n"+
+      "open("+JSON.stringify(p)+",'wb').write(ubinascii.a2b_base64("+JSON.stringify(bytesToB64(bytes))+"))\n"+
+      "print('WROTE', "+JSON.stringify(p)+", os.stat("+JSON.stringify(p)+")[6])\n";
+    log(await rawExec(code, 30000) || ("wrote "+p));
+  }
+  // seed manifest.json (the version + files we just fetched) -> first OTA check no-op
+  const manJson=JSON.stringify({version:man.version, files:files});
+  const code=
+    "import ubinascii\n"+
+    "open('manifest.json','wb').write(ubinascii.a2b_base64("+JSON.stringify(b64utf8(manJson))+"))\n"+
+    "print('WROTE manifest.json', "+JSON.stringify(man.version)+")\n";
+  log(await rawExec(code) || "wrote manifest.json");
+  log("firmware "+man.version+" staged ✓");
+}
 
 // --- the one button: create-or-reuse -> mint -> write -> reboot ----------------
 async function provision(){
@@ -216,12 +285,40 @@ async function provision(){
     const tok=(await adminApi("/tokens",{method:"POST",body:{kind:"device",device_id:name}})).token;
     log("minted a device token");
 
-    // 3. write secrets.py over serial + reboot
+    // 3. enter raw REPL once — firmware (optional), secrets.py + config all run here
     log("entering raw REPL…");
     await rawEnter();
+
+    // 3a. optionally PULL + stage the latest firmware before secrets, so a USB provision
+    //     lands current code + config together (and seeds manifest.json -> no-op 1st OTA).
+    if($("uploadFw").checked){
+      try{ await uploadFirmware(tok); }
+      catch(e){
+        const m=e&&e.message?e.message:String(e);
+        throw new Error("firmware upload failed ("+m+") — untick “Upload latest firmware too” to provision config-only");
+      }
+    }
+
+    // 3b. write secrets.py over serial
     const content=buildSecrets({ssid, pw:$("pw").value, url, deviceId:name, token:tok});
     const code="import ubinascii\nopen('secrets.py','wb').write(ubinascii.a2b_base64("+JSON.stringify(b64utf8(content))+"))\nimport os\nprint('WROTE', os.stat('secrets.py')[6], 'bytes')\n";
     log(await rawExec(code) || "(written)");
+    // A brand-new Pico has NO config.py, and config.py is (correctly) NOT in the
+    // OTA manifest, so we can't pull+patch it. If it's MISSING, seed the bridge's
+    // provisioning template first; if it already EXISTS, leave it untouched and
+    // only patch DEVICE_ID below — never clobber a device's existing config.
+    const cfgState = await rawExec(
+      "import os\ntry:\n    os.stat('config.py')\n    print('HAVE')\nexcept OSError:\n    print('MISSING')\n"
+    );
+    if(cfgState.includes("MISSING")){
+      log("no config.py on device — fetching provisioning template…");
+      const tpl = await (await fwFetch("/provision-file?path="+encodeURIComponent("config.py"), tok)).text();
+      const cfgCode =
+        "import ubinascii, os\n" +
+        "open('config.py','wb').write(ubinascii.a2b_base64(" + JSON.stringify(b64utf8(tpl)) + "))\n" +
+        "print('WROTE config.py', os.stat('config.py')[6])\n";
+      log(await rawExec(cfgCode) || "wrote config.py template");
+    }
     // Also patch config.DEVICE_ID so the chosen name works on ANY firmware version
     // (older firmware reads config.DEVICE_ID, not secrets.DEVICE_ID). Plain string
     // ops -- no regex -- so it runs on MicroPython's limited ure.

@@ -128,8 +128,11 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
     try:
         resp = urequests.get(url, headers=headers)
     except Exception as e:
+        # Uniform return shape: every poll() exit carries control_fw + poll_interval
+        # (both None here -- no body to read) so callers never KeyError on a path.
         return {"action": "offline", "etag": last_etag, "screen": None,
-                "error": "request failed: " + str(e)}
+                "error": "request failed: " + str(e),
+                "poll_interval": None, "control_fw": None}
 
     body = None
     error = None
@@ -153,20 +156,28 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
     body_schema = body.get("schema") if isinstance(body, dict) else None
     action, etag = decide_action(status, body_etag, last_etag, body_schema)
 
-    # Surface the server-tuned cadence (clamped locally). Available on any parsed
-    # 200 body -- including a 200-same-etag "skip" -- so a control-only change is
-    # still applied. None when there's no body (304) or no control block.
+    # Surface the server-tuned cadence + the latest firmware version. Both come from
+    # control on any parsed 200 body -- including a 200-same-etag "skip" -- so a
+    # control-only change (new cadence OR a waiting OTA) still rides the poll. Both
+    # are None when there's no body (304) or no control block; on a 304 the device
+    # learns the new fw on the next 200 (the bridge folds fw into the ETag so an fw
+    # bump forces a 200). control.fw drives the OTA trigger in main.cycle().
     interval = None
+    control_fw = None
     control = body.get("control") if isinstance(body, dict) else None
     if isinstance(control, dict):
         interval = clamp_interval(control.get("poll_interval"))
+        fw = control.get("fw")
+        if fw is not None:
+            control_fw = str(fw)
 
     if action == "render" and body is None:
         # 200 but unparseable body -> treat as offline rather than render garbage.
         return {"action": "offline", "etag": last_etag, "screen": None,
-                "error": error or "empty body", "poll_interval": interval}
+                "error": error or "empty body", "poll_interval": interval,
+                "control_fw": control_fw}
 
     return {"action": action, "etag": etag,
             "screen": body if action == "render" else None,
             "error": error if action == "offline" else None,
-            "poll_interval": interval}
+            "poll_interval": interval, "control_fw": control_fw}

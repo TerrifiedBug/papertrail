@@ -11,7 +11,9 @@ last image at **zero power**, so the tag can run for weeks on a small LiPo.
 - **Operations:** [`docs/deploy.md`](docs/deploy.md) — run the bridge, mint tokens, push events.
 - **Security:** [`docs/security.md`](docs/security.md) — threat model + what's implemented vs. out of scope.
 - **Dashboard:** [`docs/dashboard.md`](docs/dashboard.md) — the LAN-only admin web UI (devices, tokens, live preview).
-- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — web-flashing, sticky events, what's next.
+- **Flashing:** [`docs/flashing.md`](docs/flashing.md) — provision a Pico over USB from the browser (config + firmware upload).
+- **OTA:** [`docs/ota.md`](docs/ota.md) — over-the-air firmware updates: manifest, delta pull, atomic write, rollback.
+- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — sticky events, what's next.
 
 ---
 

@@ -81,7 +81,9 @@ def test_config_unknown_keys_422(ctx):
 
 def test_current_has_control_block(ctx):
     body = ctx.client.get(CURRENT, headers=bearer(DEVICE_TOKEN)).json()
-    assert body["control"] == {"poll_interval": 120}
+    # control carries poll_interval AND the additive OTA fw version (12-hex).
+    assert body["control"]["poll_interval"] == 120
+    assert isinstance(body["control"]["fw"], str) and len(body["control"]["fw"]) == 12
 
 
 def test_poll_interval_change_busts_304(ctx):
@@ -96,7 +98,7 @@ def test_poll_interval_change_busts_304(ctx):
     after = ctx.client.get(CURRENT, headers={**bearer(DEVICE_TOKEN), "If-None-Match": etag1})
     assert after.status_code == 200                       # control change busts the 304
     assert after.headers["etag"] != etag1
-    assert after.json()["control"] == {"poll_interval": 300}
+    assert after.json()["control"]["poll_interval"] == 300
 
 
 # --- telemetry: persistence, clamping, and never-4xx ---------------------------

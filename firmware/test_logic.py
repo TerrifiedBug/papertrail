@@ -18,12 +18,14 @@
 
 import sys
 import os
+import hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import ina219
 import poller
 import render
+import ota
 
 INK = render.INK
 PAPER = render.PAPER
@@ -376,12 +378,113 @@ def test_qr_end_to_end():
     assert len(cap) == 1 and len(cap[0][1]) <= 17, "caption first line @ (104,30) <=17"
 
 
+# --------------------------------------------------------------------------
+# 4. OTA pure logic (device-side updater -- ota.py)
+# --------------------------------------------------------------------------
+def test_ota_manifest_diff():
+    # pull only the changed (sha differs) + the brand-new paths; delete only the
+    # path that left the manifest. Unchanged paths are left alone.
+    local = {"main.py": "aaa", "render.py": "bbb", "wifi.py": "ccc", "old.py": "ddd"}
+    server = {"main.py": "aaa",        # unchanged -> NOT pulled
+              "render.py": "BBB",      # sha changed -> pull
+              "wifi.py": "ccc",        # unchanged -> NOT pulled
+              "new.py": "eee"}         # new path -> pull   (old.py -> delete)
+    pull, delete = ota.manifest_diff(local, server)
+    assert pull == ["new.py", "render.py"], "pull only changed+new, sorted: %r" % (pull,)
+    assert delete == ["old.py"], "delete only the removed path: %r" % (delete,)
+
+    # nested lib/ path: a changed sha there is pulled like any other.
+    pull2, _ = ota.manifest_diff({"lib/uQR.py": "1"}, {"lib/uQR.py": "2"})
+    assert pull2 == ["lib/uQR.py"], "changed lib file pulled: %r" % (pull2,)
+
+    # NEVER delete device-local / runtime files, even if absent from the server
+    # manifest: config.py, secrets.py, manifest.json, and any *.txt backstop.
+    local3 = {"config.py": "x", "secrets.py": "y", "manifest.json": "z",
+              "last_etag.txt": "t", "boot_count.txt": "b", "bad_fw.txt": "q",
+              "gone.py": "g"}
+    pull3, delete3 = ota.manifest_diff(local3, {})
+    assert pull3 == [], "nothing to pull from an empty server manifest"
+    assert delete3 == ["gone.py"], "protected files kept; only gone.py deleted: %r" % (delete3,)
+
+    # None / empty inputs are safe and symmetric.
+    assert ota.manifest_diff(None, None) == ([], []), "None inputs -> empty plan"
+    assert ota.manifest_diff({}, {"a": "1"}) == (["a"], []), "all-new -> pull, no delete"
+    assert ota.manifest_diff({"a": "1"}, {}) == ([], ["a"]), "all-removed -> delete, no pull"
+
+
+def test_ota_protected_never_pulled():
+    # Defense-in-depth: even if the server manifest advertises a CHANGED sha for a
+    # protected path, the delta planner must NEVER pull it (config.py/secrets.py are
+    # device-local; boot.py is the immutable recovery guard; manifest.json/*.txt are
+    # device-managed). This mirrors -- but does not trust -- the server's exclusion.
+    local = {"main.py": "aaa", "config.py": "c0", "secrets.py": "s0",
+             "boot.py": "b0", "manifest.json": "m0", "last_etag.txt": "t0",
+             "pending_fw.txt": "p0"}
+    server = {"main.py": "AAA",          # ordinary file changed -> pulled
+              "config.py": "c1",         # device-local creds -> NOT pulled
+              "secrets.py": "s1",        # device-local creds -> NOT pulled
+              "boot.py": "b1",           # immutable recovery guard -> NOT pulled
+              "manifest.json": "m1",     # local commit point -> NOT pulled
+              "last_etag.txt": "t1",     # *.txt backstop -> NOT pulled
+              "pending_fw.txt": "p1"}    # *.txt backstop -> NOT pulled
+    pull, delete = ota.manifest_diff(local, server)
+    assert pull == ["main.py"], "only the ordinary changed file is pulled: %r" % (pull,)
+    assert delete == [], "no deletes -- every local path still on the server: %r" % (delete,)
+
+    # boot.py BRAND-NEW on the server (not present locally) is STILL never pulled --
+    # OTA can never lay down a boot.py, it exists at flash time only.
+    pull2, _ = ota.manifest_diff({}, {"boot.py": "b1", "app.py": "a1"})
+    assert pull2 == ["app.py"], "boot.py never pulled even when new: %r" % (pull2,)
+
+    # The protected set: device-local identity/creds, the local manifest, the
+    # immutable recovery guard, and any *.txt backstop (basename match, any dir).
+    for p in ("config.py", "secrets.py", "secrets.example.py", "boot.py",
+              "manifest.json", "last_etag.txt", "pending_fw.txt", "lib/boot.py"):
+        assert ota._is_protected(p) is True, "%s must be protected" % p
+    for p in ("main.py", "render.py", "wifi.py", "lib/uQR.py"):
+        assert ota._is_protected(p) is False, "%s must NOT be protected" % p
+
+
+def test_ota_should_update():
+    assert ota.should_update("abc123", "abc123") is False, "equal version -> skip"
+    assert ota.should_update("def456", "abc123") is True, "different version -> update"
+    assert ota.should_update("def456", None) is True, "no local manifest yet -> update"
+    assert ota.should_update(None, "abc123") is False, "no advert (None) -> skip"
+    assert ota.should_update("", "abc123") is False, "empty advert -> skip"
+
+
+def test_ota_verify():
+    data = b"papertrail firmware bytes \x00\x01\x02"
+    good = hashlib.sha256(data).hexdigest()
+    assert ota.verify(data, good) is True, "matching sha256 verifies"
+    assert ota.verify(data, good.upper()) is True, "sha compare is case-insensitive"
+    assert ota.verify(data, "00" + good[2:]) is False, "wrong sha rejected"
+    assert ota.verify(b"tampered", good) is False, "tampered bytes rejected"
+    assert ota.verify(data, None) is False, "missing sha rejected (never write unverified)"
+    assert ota.verify(data, "") is False, "empty sha rejected"
+
+
+def test_ota_crash_loop():
+    # boot.py increments boot_count each boot; counter <= cap is fine, > cap restores.
+    assert ota.should_restore(0, 3) is False, "fresh boot -> ok"
+    assert ota.should_restore(1, 3) is False, "one boot -> ok"
+    assert ota.should_restore(3, 3) is False, "exactly at the cap (<=3) -> still ok"
+    assert ota.should_restore(4, 3) is True, "one past the cap (>3) -> restore /backup"
+    assert ota.should_restore(99, 3) is True, "deep crash loop -> restore"
+    assert ota.should_restore(None, 3) is False, "unreadable counter -> don't restore"
+
+
 TESTS = [
     test_battery_curve,
     test_etag_decision,
     test_poll_interval_clamp,
     test_schema_version_guard,
     test_telemetry_query_string,
+    test_ota_manifest_diff,
+    test_ota_protected_never_pulled,
+    test_ota_should_update,
+    test_ota_verify,
+    test_ota_crash_loop,
     test_clip,
     test_wrap,
     test_status_card_fields,

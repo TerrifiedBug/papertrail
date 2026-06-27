@@ -12,6 +12,7 @@
     --ink:#111;
     --muted:#6a665f;
     --danger:#c0392b;
+    --ok:#2e7d32;            /* up-to-date firmware */
     --rule:#ddd;
     --red:#d12b1f;            /* the device's red plane */
   }
@@ -109,6 +110,7 @@
   }
   .tag-muted{background:var(--paper);color:var(--muted);border:1.5px solid var(--rule);}
   .tag-danger{background:var(--danger);color:#fff;}
+  .tag-ok{background:var(--ok);color:#fff;}
 
   /* --- layout chrome ------------------------------------------------------- */
   .topbar{
@@ -277,7 +279,7 @@ const PAPER = "#fff";
 let token = localStorage.getItem(TOKEN_KEY) || "";
 let modalCount = 0;
 let refreshTimer = null;
-const state = { tab: "dashboard", devices: [] };
+const state = { tab: "dashboard", devices: [], fwLatest: null };
 
 const LAYOUTS = ["status_card", "alert", "list", "metric", "qr"];
 const LAYOUT_FIELDS = {
@@ -678,14 +680,49 @@ async function loadDashboard(silent) {
   const view = document.getElementById("view");
   if (!silent) { view.replaceChildren(dashboardHeader(), el("div", { class: "meta", text: "Loading devices…" })); }
   let data;
-  try { data = await api("/devices"); }
+  try {
+    // Fetch devices + the latest firmware version together. The firmware lookup is
+    // best-effort: a 404 (older bridge) or any failure must NOT break the dashboard,
+    // so it's caught locally and degrades to "unknown". A 401/503 on /devices still
+    // propagates to the outer catch and drives sign-out as before.
+    const results = await Promise.all([
+      api("/devices"),
+      api("/firmware").catch(function () { return null; })
+    ]);
+    data = results[0];
+    const fw = results[1];
+    state.fwLatest = (fw && typeof fw.version === "string" && fw.version) ? fw.version : null;
+  }
   catch (e) { if (!silent) view.replaceChildren(dashboardHeader(), errorCard(e)); handleApiError(e); return; }
   state.devices = (data && data.devices) || [];
   renderDashboard();
 }
+/* Firmware status for one device, relative to the latest manifest version.
+   "ok"      -> device.last_fw matches the latest bridge firmware
+   "stale"   -> known but different version, or unknown (update pending)
+   "unknown" -> latest version couldn't be fetched, so we can't judge */
+function fwStatus(d) {
+  const latest = state.fwLatest;
+  const fw = (d && d.telemetry && d.telemetry.last_fw) || null;
+  if (!latest) return { state: "unknown", fw: fw };
+  if (fw && fw === latest) return { state: "ok", fw: fw };
+  return { state: "stale", fw: fw };
+}
+function fwSummaryLine() {
+  const latest = state.fwLatest;
+  const devices = state.devices || [];
+  if (!latest) return "firmware version unknown";
+  let current = 0;
+  devices.forEach(function (d) { if (fwStatus(d).state === "ok") current++; });
+  return "firmware v" + latest + " · " + current + "/" + devices.length + " devices current";
+}
 function dashboardHeader() {
   return el("div", { class: "section-head" },
-    el("div", {}, el("div", { class: "kicker", text: "fleet" }), el("h2", { text: "Dashboard" })),
+    el("div", {},
+      el("div", { class: "kicker", text: "fleet" }),
+      el("h2", { text: "Dashboard" }),
+      el("div", { class: "meta", style: "margin-top:2px;", text: fwSummaryLine() })
+    ),
     el("div", { class: "nav" },
       el("button", { class: "btn", type: "button", text: "Refresh", onclick: function () { loadDashboard(); } }),
       el("button", { class: "btn btn-primary", type: "button", text: "+ New device", onclick: openNewDevice })
@@ -718,7 +755,17 @@ function deviceCard(d) {
     badges.appendChild(el("span", { class: "tag" + (low ? " tag-danger" : ""), text: "batt " + tel.last_batt + "%" }));
   }
   if (tel.last_rssi != null) badges.appendChild(el("span", { class: "tag tag-muted", text: tel.last_rssi + " dBm" }));
-  if (tel.last_fw) badges.appendChild(el("span", { class: "tag tag-muted", text: "fw " + tel.last_fw }));
+  // Firmware badge — green when current, danger "update pending" pill when out of date
+  // or unknown, neutral when the latest version couldn't be fetched. All text via
+  // textContent (the el `text:` attr) so device-supplied versions can't inject markup.
+  const fwSt = fwStatus(d);
+  if (fwSt.state === "ok") {
+    badges.appendChild(el("span", { class: "tag tag-ok", text: "fw " + fwSt.fw + " · current" }));
+  } else if (fwSt.state === "stale") {
+    badges.appendChild(el("span", { class: "tag tag-danger", text: (fwSt.fw ? "fw " + fwSt.fw : "fw unknown") + " · update pending" }));
+  } else if (fwSt.fw) {
+    badges.appendChild(el("span", { class: "tag tag-muted", text: "fw " + fwSt.fw }));
+  }
 
   const canvas = el("canvas", { class: "epaper", width: "500", height: "244" });
   // render after element exists (drawing to the buffer works regardless of attach)

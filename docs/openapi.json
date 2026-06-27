@@ -298,7 +298,8 @@
                     "footer": "papertrail"
                   },
                   "control": {
-                    "poll_interval": 120
+                    "poll_interval": 120,
+                    "fw": "a1b2c3d4e5f6"
                   },
                   "etag": "c0ffee...",
                   "rendered_at": 1750000000
@@ -398,6 +399,153 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/firmware/manifest": {
+      "get": {
+        "tags": [
+          "firmware"
+        ],
+        "summary": "Firmware Manifest",
+        "description": "The bundled firmware manifest hashed at startup. Auth: any valid device\ntoken OR the admin token. The device diffs this against its last-applied\nmanifest.json and pulls only the files whose sha changed.",
+        "operationId": "firmware_manifest_api_firmware_manifest_get",
+        "responses": {
+          "200": {
+            "description": "Firmware version + per-file sha256 map.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "version": "a1b2c3d4e5f6",
+                  "files": {
+                    "main.py": "\u202664 hex\u2026",
+                    "lib/uQR.py": "\u202664 hex\u2026"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/firmware/file": {
+      "get": {
+        "tags": [
+          "firmware"
+        ],
+        "summary": "Firmware File",
+        "description": "Raw bytes of ONE firmware file. Auth: any valid device token OR the\nadmin token. ``path`` MUST be a manifest key \u2014 anything else (missing,\n``..``/absolute/traversal, unknown) is rejected (400/404), never read\noff-bundle.",
+        "operationId": "firmware_file_api_firmware_file_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "a path that is a key in the firmware manifest",
+              "title": "Path"
+            },
+            "description": "a path that is a key in the firmware manifest"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/firmware/provision-file": {
+      "get": {
+        "tags": [
+          "firmware"
+        ],
+        "summary": "Firmware Provision File",
+        "description": "Serve a device-local PROVISIONING TEMPLATE from the firmware dir, for a\nbrand-new Pico that has no config.py yet (config.py is intentionally NOT in\nthe OTA manifest, so the flasher cannot pull+patch it). This is SEPARATE\nfrom the OTA bundle: ``path`` must be in a tiny fixed allowlist\n(``config.py`` / ``secrets.example.py``) \u2014 anything else is 404. Auth: any\nvalid device token OR the admin token (same gate as the OTA endpoints).",
+        "operationId": "firmware_provision_file_api_firmware_provision_file_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "a provisioning template name: config.py or secrets.example.py",
+              "title": "Path"
+            },
+            "description": "a provisioning template name: config.py or secrets.example.py"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/firmware": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Firmware",
+        "description": "Latest bundled firmware version (admin) \u2014 the dashboard shows this and\nhighlights any device whose last_fw is out of date.",
+        "operationId": "admin_firmware_api_admin_firmware_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -843,6 +991,10 @@
     {
       "name": "telemetry",
       "description": "Stored device telemetry for the dashboard (device token)."
+    },
+    {
+      "name": "firmware",
+      "description": "Bridge-served firmware bundle for pull/delta OTA. Auth accepts ANY valid device token OR the admin token. The bridge hashes the bundled firmware at startup; devices diff the manifest and pull only changed files (each verified by sha256)."
     },
     {
       "name": "ops",

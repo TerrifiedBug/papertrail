@@ -99,10 +99,25 @@ class Resolution:
 
 
 def resolve_from_events(
-    device: DeviceRow, events: list[EventRow], now: int
+    device: DeviceRow,
+    events: list[EventRow],
+    now: int,
+    fw_version: Optional[str] = None,
 ) -> Resolution:
-    """Pure resolution given a device + its candidate events."""
-    control = {"poll_interval": device.poll_interval_s}
+    """Pure resolution given a device + its candidate events.
+
+    ``fw_version`` (the latest firmware manifest version) rides ALONGSIDE
+    poll_interval in the ``control`` block so OTA piggybacks the existing poll.
+    It is deliberately kept OUT of the ETag (only ``etag_control`` is hashed,
+    like ``rendered_at``) so a firmware bump never churns a device's 304 cache —
+    the device reads ``control.fw`` from the 200 body it would have fetched
+    anyway and only runs an OTA check when it differs from its running version.
+    """
+    # Only poll_interval is hashed into the ETag; fw is additive + non-churning.
+    etag_control = {"poll_interval": device.poll_interval_s}
+    control = (
+        etag_control if fw_version is None else {**etag_control, "fw": fw_version}
+    )
     subscribed = set(device.channels)
     candidates = [
         e
@@ -130,7 +145,7 @@ def resolve_from_events(
             source_event_id=None,
             priority=None,
             control=control,
-            etag=compute_etag(device.id, layout, content, control),
+            etag=compute_etag(device.id, layout, content, etag_control),
         )
 
     # Highest priority wins; tie-break NEWEST received_at.
@@ -143,13 +158,23 @@ def resolve_from_events(
         priority=chosen.priority,
         control=control,
         received_at=chosen.received_at,
-        etag=compute_etag(device.id, chosen.layout, chosen.content, control),
+        etag=compute_etag(device.id, chosen.layout, chosen.content, etag_control),
     )
 
 
-def current(store: Store, device: DeviceRow, now: Optional[int] = None) -> Resolution:
-    """Resolve the current screen for a device from the store."""
+def current(
+    store: Store,
+    device: DeviceRow,
+    now: Optional[int] = None,
+    fw_version: Optional[str] = None,
+) -> Resolution:
+    """Resolve the current screen for a device from the store.
+
+    ``fw_version`` is the latest firmware manifest version, injected by the
+    caller (app.py) so the ``control`` block can advertise it without resolve
+    needing to know how firmware is hashed.
+    """
     if now is None:
         now = int(time.time())
     events = store.events_for_device(device.id)
-    return resolve_from_events(device, events, now)
+    return resolve_from_events(device, events, now, fw_version=fw_version)

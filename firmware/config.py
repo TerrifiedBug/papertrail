@@ -55,6 +55,31 @@ ETAG_FILE = "last_etag.txt"          # tiny flash backstop for the last seen ETa
 INTERVAL_FILE = "poll_interval.txt"  # flash backstop for the server-tuned cadence
 
 # --------------------------------------------------------------------------
+# OTA (over-the-air firmware update) -- see ota.py + boot.py.
+# Updates are PULL/delta/sha-verified/atomic with a /backup rollback guard. The
+# bridge serves the manifest + files at the two paths below (auth = this device's
+# bearer token). NONE of these files are ever OTA'd themselves except where noted;
+# config.py + secrets.py stay device-local so DEVICE_ID/pins are never clobbered.
+# --------------------------------------------------------------------------
+FIRMWARE_MANIFEST_PATH = "/api/firmware/manifest"  # GET -> {version, files:{path:sha}}
+FIRMWARE_FILE_PATH = "/api/firmware/file"          # GET ?path=<path> -> raw bytes
+
+MANIFEST_FILE = "manifest.json"      # last-applied {version, files:{path:sha}}
+BACKUP_DIR = "backup"                # ONE known-good snapshot of changed files
+BOOT_COUNT_FILE = "boot_count.txt"   # crash-loop counter (boot.py increments)
+BAD_VERSION_FILE = "bad_fw.txt"      # a version boot.py quarantined after a crash loop
+PENDING_VERSION_FILE = "pending_fw.txt"  # version of an in-flight apply: set BEFORE the
+                                     # rename loop, cleared AFTER the manifest commit. If
+                                     # an apply is interrupted before commit, boot.py
+                                     # quarantines THIS (not the still-current good one).
+BOOT_MAX_ATTEMPTS = 3                # > this many boots w/o a clean cycle -> restore /backup
+
+# When the crash-loop guard trips but there is NO usable /backup to restore, a
+# reset-loop would just thrash a headless, battery-powered board. Idle in a long
+# deepsleep instead (preserve battery; recovers on a power-cycle / re-flash).
+RECOVERY_IDLE_S = 3600               # 1h long-idle deepsleep on unrecoverable crash loop
+
+# --------------------------------------------------------------------------
 # e-Paper display -- Waveshare Pico-ePaper-2.13-B V4 (SPI1, 250x122 landscape, tri-color)
 # Pins {8,9,10,11,12,13} don't overlap the UPS I2C set {6,7}. BUT note GP8 (DC) is
 # ALSO SPI1's default MISO -- the panel is write-only, so epaper2in13._make_spi()

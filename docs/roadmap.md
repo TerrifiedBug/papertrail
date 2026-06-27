@@ -3,14 +3,31 @@
 Shipped: the FastAPI bridge + MicroPython firmware (see [`../README.md`](../README.md)).
 In progress: the admin dashboard ([`dashboard.md`](dashboard.md)). This tracks what's next.
 
+## Shipped
+
+- **OTA firmware updates** — the bridge serves a hashed-at-startup manifest + files; devices
+  pull only changed files on the next poll (`control.fw`), verify each `sha256`, write
+  atomically, keep one known-good `/backup/`, and roll back on a boot crash-loop. Pull-only,
+  delta, hash-verified, atomic, recoverable. Full contract: [`ota.md`](ota.md).
+  - **Brick-fixes applied** — `boot.py` (the recovery guard) is now **immutable to OTA** (laid
+    down only at flash time, never in the manifest); the pull is **protected** (only manifest
+    keys are fetched; device-local + guard files are never pruned or overwritten); a boot
+    **crash-loop resets and rolls back** to `/backup/`; and the rolled-back **version is
+    quarantined** (`pending_version` → `bad_version`) so a bad update is never re-pulled in a loop.
+- **Layer A.2 — flasher also uploads firmware.** The `/flash` page can write the full firmware
+  `.py` set over USB alongside `secrets.py` + `config.DEVICE_ID`, seeding `manifest.json` so the
+  first OTA check is a no-op — a USB provision lands latest code + config in one go. See
+  [`flashing.md`](flashing.md#layer-a2--also-upload-firmware).
+
 ## Web-based device provisioning / flashing
 
 Configure + flash a Pico from the browser — no MicroPico, no hand-edited `secrets.py`.
 
-- **Layer A — config push (PROTOTYPE shipped).** A `/flash` page writes `secrets.py`
-  (WiFi, device token, server URL, device id) over USB — see [`flashing.md`](flashing.md).
-  Still to do: upload the firmware `.py` set over the same channel; host it at an HTTPS
-  origin so it works off `localhost`. The browser [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
+- **Layer A — config push + firmware upload (shipped).** A `/flash` page writes `secrets.py`
+  (WiFi, device token, server URL, device id) over USB and — with **Layer A.2** (shipped) —
+  uploads the firmware `.py` set over the same channel and seeds `manifest.json` — see
+  [`flashing.md`](flashing.md). Still to do: host the page at an HTTPS origin so it works off
+  `localhost`. The browser [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
   opens the Pico's USB serial port → drops MicroPython into **raw REPL** → writes files
   (~100 lines of JS, same as mpremote/MicroPico). The dashboard already holds the device
   token + `SERVER_URL`, so one **Provision** click writes `secrets.py` (wifi creds you type
@@ -24,33 +41,9 @@ Configure + flash a Pico from the browser — no MicroPico, no hand-edited `secr
   flasher as a **standalone HTTPS static page** (the ESP-Web-Tools pattern) that runs serial
   locally and calls the admin API over CORS. Prior art: ViperIDE, `micropython/webrepl`.
 
-## OTA firmware updates (next big build)
-
-Keep deployed Picos current without USB. The web flasher only writes config, so a
-device runs whatever firmware was last uploaded — it drifts from the repo. OTA closes
-that gap from the bridge.
-
-- **Bridge serves firmware:** `GET /api/firmware/manifest` → `{version, files:{path: sha256}}`
-  (hashed at startup from the bundled `firmware/` — no build step); `GET /api/firmware/file?path=…`
-  → content (device-token auth, LAN). Packaging: `COPY firmware/` into the image (CI already
-  builds from the repo).
-- **Storage discipline (Pico W = ~1MB FS, firmware ≈150KB):** the device keeps a local
-  `manifest.json` and pulls **only files whose sha changed** (delta — most updates are 1–2
-  files). Per-file atomic write (`<path>.new` → verify sha → rename) needs only ~30KB spare
-  at a time, not a second full copy. Files dropped from the manifest are deleted.
-- **Device:** on boot / every N polls, fetch the manifest, diff `sha256` vs a local
-  `version.txt`. For each changed file: download → write `<path>.new` → verify hash →
-  atomic rename → bump version → reset. The poll's `control` block can carry `fw_latest`
-  so the device knows an update is waiting (it already reports `fw` via telemetry).
-- **Safety (OTA can brick a device):** atomic writes + per-file hash; a **recovery boot
-  guard** (crash-loop → roll back to the known-good copy — the old project's `recovery.py`
-  pattern); staged rollout (one device first); never half-write the updater itself.
-- **Dashboard:** already receives each device's `fw` → show version spread + a "push
-  update" action.
-- Prior art: the user's earlier `pico/ota_updater.py` + `recovery.py` (GitHub-sourced OTA).
-
-Companion: **Layer A.2** — have the web flasher also upload the firmware `.py` set over
-serial, so a USB-in-hand provision lands the latest code + config in one go.
+> **OTA firmware updates and Layer A.2 shipped** — moved to [Shipped](#shipped) above.
+> The full contract (manifest + files, `control.fw`, delta/atomic/backup/recovery, the
+> rollback guarantee) is documented in [`ota.md`](ota.md).
 
 ## Sticky-by-default events (DECIDED — build next)
 
@@ -75,6 +68,30 @@ same commit as the admin GUI.
 
 ## Deferred (designed, not yet built)
 
+- **Hardening — firmware signing (deferred).** OTA today trusts the manifest by `sha256`
+  (integrity, not authenticity); the v1 threat model is **LAN + device-token-gated**. A future
+  revision **signs the manifest** — HMAC with a flash-baked key, or Ed25519 with the bridge
+  holding the private key and the device only the public key — and verifies the signature
+  **before** trusting any `sha`, closing the LAN-MITM gap. See
+  [`ota.md`](ota.md#hardening--firmware-signing-deferred).
+- **OTA residual hardening — VALIDATE ON-DEVICE before trusting remote (no-USB) OTA.** The
+  core brick-guarantees hold (immutable `boot.py`, protected files never pulled/deleted,
+  reset-on-crash, atomic + sha-verified writes, manifest-committed-last, pending-version
+  quarantine, rollback from `/backup`). Adversarial re-verify flagged residuals that need a
+  real device to settle, not more agent rounds:
+  - **Hung (not crashed) bad OTA** isn't caught by the exception-based guard. A naive
+    `machine.WDT` won't do — RP2040's watchdog maxes ~8.3s but a tri-color render is ~15s, so
+    a cycle-spanning WDT resets mid-render. Needs a designed hang-guard: feed the WDT at safe
+    points + bound the display `ReadBusy` with a timeout (so a stuck BUSY can't hang forever).
+  - **Interrupted-apply reconcile:** on a power cut mid-rename, the on-disk bytes no longer
+    match the local manifest; the next delta plan is wrong. Detect a leftover `pending_fw.txt`
+    at `apply()` start and reconcile (restore `/backup` first) before planning.
+  - **Heal a latched crash-counter:** the flasher should zero `boot_count.txt` when laying
+    down firmware (a no-backup crash-loop currently latches the counter high). Clear
+    `pending_fw.txt` on the recovery paths; only zero the counter when a restore actually wrote.
+  - On-device smoke tests to run first: (a) interrupt `apply()` before commit → confirm the NEW
+    version is quarantined; (b) crash-loop with empty `/backup` → confirm long-idle, not reset-loop;
+    (c) a `cycle()` throw → confirm `boot_count` increments and the guard heals.
 - One-shot device actions — `reboot` / `clear` / `force_full_refresh` — with the
   ack-handshake (sketched in [`security.md`](security.md)).
 - Per-event render hints (`invert`, `full_refresh`).
