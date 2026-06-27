@@ -174,36 +174,47 @@ panel entirely (zero flash, zero power, image retained).
 > Full operations, Caddy config, and per-layout examples are in
 > [`docs/deploy.md`](docs/deploy.md). This is the 5-minute path.
 
-### 1. Run the bridge
+### 1. Provision devices + tokens (`seed.json`)
+
+Devices and tokens live in a `seed.json` the bridge reads on first run — it stores
+only each token's `sha256`. Mint strong tokens and drop them in (start from
+[`server/seed.example.json`](server/seed.example.json)):
 
 ```bash
-cp .env.example .env                 # set DB path, default rate_per_min, etc.
-docker compose up -d                 # Caddy (TLS) + FastAPI bridge + SQLite volume
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # run once per token
 ```
 
-### 2. Seed a device and mint tokens
+```json
+{
+  "devices": [
+    { "id": "kitchen-01",
+      "channels": ["home.status", "home.alerts", "home.tasks"],
+      "fallback": { "layout": "status_card", "content": {
+        "title": "Papertrail", "status": "IDLE", "subtitle": "Waiting for updates",
+        "lines": ["No active messages"], "footer": "papertrail" } },
+      "poll_interval_s": 120, "low_batt_interval_s": 600 }
+  ],
+  "tokens": [
+    { "token": "<device-token>", "kind": "device", "device_id": "kitchen-01", "rate_per_min": 60 },
+    { "token": "<ingest-token>", "kind": "ingest", "device_id": "kitchen-01", "channels": null, "rate_per_min": 120 }
+  ]
+}
+```
 
-Tokens are random secrets **you** generate; the bridge only ever stores their
-`sha256` digest. Mint two — one to read, one to write — and register them:
+The **device** token goes into the Pico's `secrets.py`; each **ingest** token goes to
+your webhook sources. After first run, manage devices + tokens live from the
+[**dashboard**](docs/dashboard.md) instead of editing this file.
+
+### 2. Run the bridge
 
 ```bash
-DEVICE_TOKEN=$(openssl rand -hex 32)
-INGEST_TOKEN=$(openssl rand -hex 32)
-
-# Register a device subscribed to a few channels, with an idle fallback screen.
-docker compose exec bridge python -m papertrail.admin seed-device \
-  --id kitchen-01 \
-  --channels home.status,home.alerts,home.tasks \
-  --fallback docs/payloads/device-config.json
-
-# Bind the tokens (plaintext passed once; only the sha256 is persisted).
-docker compose exec bridge python -m papertrail.admin add-token \
-  --kind device --device kitchen-01 --token "$DEVICE_TOKEN"
-docker compose exec bridge python -m papertrail.admin add-token \
-  --kind ingest --device kitchen-01 --token "$INGEST_TOKEN"
-
-echo "device token: $DEVICE_TOKEN"   # goes into the Pico's secrets.py
+mkdir -p data && cp seed.json data/seed.json   # real tokens, gitignored
+docker compose up -d                           # pulls ghcr.io/<owner>/papertrail
 ```
+
+Front it with your own Caddy for the public `/events` ingest (see
+[`docs/deploy.md`](docs/deploy.md)); the Pico polls `http://<homelab-ip>:8000/...`
+directly on the LAN.
 
 ### 3. Send an example webhook
 

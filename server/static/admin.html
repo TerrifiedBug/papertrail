@@ -738,6 +738,7 @@ function deviceCard(d) {
     el("button", { class: "btn btn-sm btn-primary", type: "button", text: "Send", onclick: function () { openSendEvent(d); } }),
     el("button", { class: "btn btn-sm", type: "button", text: "Interval", onclick: function () { openInterval(d); } }),
     el("button", { class: "btn btn-sm", type: "button", text: "Events", onclick: function () { openEvents(d); } }),
+    el("button", { class: "btn btn-sm", type: "button", text: "Edit", onclick: function () { openEditDevice(d); } }),
     el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Delete", onclick: function () { confirmDeleteDevice(d); } })
   );
 
@@ -773,7 +774,7 @@ function openSendEvent(d) {
     ? selectEl(channels, channels[0])
     : el("input", { class: "inp", type: "text", placeholder: "channel name" });
   const prioInput = el("input", { class: "inp", type: "number", value: "100", min: "0", max: "255" });
-  const ttlInput = el("input", { class: "inp", type: "number", value: "3600", min: "1" });
+  const ttlInput = el("input", { class: "inp", type: "number", value: "", min: "0", placeholder: "blank or 0 = permanent" });
   const idInput = el("input", { class: "inp", type: "text", placeholder: "auto-generated if blank" });
 
   const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
@@ -787,7 +788,7 @@ function openSendEvent(d) {
     preview,
     field("Layout", layoutSel),
     el("div", { class: "two-col" }, field("Channel", channelInput), field("Priority (0–255)", prioInput)),
-    el("div", { class: "two-col" }, field("TTL seconds", ttlInput), field("Event id (optional)", idInput)),
+    el("div", { class: "two-col" }, field("TTL seconds (blank = permanent)", ttlInput), field("Event id (optional)", idInput)),
     ed.node,
     errBox,
     el("div", { class: "actions" }, sendBtn)
@@ -802,10 +803,12 @@ function openSendEvent(d) {
     const payload = {
       channel: channel,
       priority: Math.max(0, Math.min(255, Math.round(Number(prioInput.value) || 0))),
-      ttl_seconds: Math.max(1, Math.round(Number(ttlInput.value) || 1)),
       layout: layoutSel.value,
       content: ed.read()
     };
+    const ttlRaw = (ttlInput.value || "").trim();
+    const ttl = ttlRaw === "" ? 0 : Math.max(0, Math.round(Number(ttlRaw) || 0));
+    if (ttl > 0) payload.ttl_seconds = ttl;   // omit => sticky (no expiry)
     const id = (idInput.value || "").trim();
     if (id) payload.id = id;
     sendBtn.disabled = true;
@@ -879,11 +882,12 @@ async function loadEventList(d, listWrap) {
       el("span", { class: "tag tag-muted", text: ev.layout }),
       el("span", { class: "tag tag-muted", text: "ch " + ev.channel }),
       el("span", { class: "tag tag-muted", text: "prio " + ev.priority }),
-      el("span", { class: "tag" + (ev.expired ? " tag-danger" : ""), text: ev.expired ? "expired" : inFromNow(ev.expires_at) })
+      el("span", { class: "tag" + (ev.expired ? " tag-danger" : ""),
+        text: ev.expired ? "expired" : (ev.expires_at == null ? "permanent" : inFromNow(ev.expires_at)) })
     );
     const main = el("div", { class: "row-main" },
       el("div", { class: "row-title mono", text: ev.id }),
-      el("div", { class: "meta", text: "received " + relTime(ev.received_at) + " · ttl " + ev.ttl_seconds + "s" }),
+      el("div", { class: "meta", text: "received " + relTime(ev.received_at) + " · " + (ev.ttl_seconds && ev.ttl_seconds > 0 ? "ttl " + ev.ttl_seconds + "s" : "no expiry") }),
       tags
     );
     const delBtn = el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Delete" });
@@ -957,6 +961,58 @@ function openNewDevice() {
       if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
       errBox.textContent = e.status === 409 ? "A device with that id already exists." : formatDetail(e);
       createBtn.disabled = false;
+    }
+  });
+}
+function openEditDevice(d) {
+  const channelsInput = el("input", { class: "inp", type: "text", value: (Array.isArray(d.channels) ? d.channels.join(", ") : "") });
+  const pollInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: String(d.poll_interval_s) });
+  const lowBattInput = el("input", { class: "inp", type: "number", min: "30", value: String(d.low_batt_interval_s) });
+
+  const fb = d.fallback || { layout: "status_card", content: {} };
+  const layoutSel = selectEl(LAYOUTS, LAYOUTS.indexOf(fb.layout) !== -1 ? fb.layout : "status_card");
+  const ed = contentEditor(layoutSel.value, fb.content || {}, updatePreview);
+  layoutSel.addEventListener("change", function () { ed.setLayout(layoutSel.value); updatePreview(); });
+  const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
+  function updatePreview() { renderPreview(preview, layoutSel.value, ed.read()); }
+
+  const errBox = el("div", { class: "meta danger" });
+  const saveBtn = el("button", { class: "btn btn-primary", type: "button", text: "Save changes" });
+
+  const body = el("div", {},
+    field("Channels", channelsInput),
+    el("div", { class: "two-col" }, field("Poll interval (s)", pollInput), field("Low-batt interval (s)", lowBattInput)),
+    el("div", { class: "kicker", text: "fallback screen" }),
+    el("div", { class: "meta", text: "The always-on default — shown when no live event is active. Set a wifi QR (or any screen) here to keep it up permanently." }),
+    el("div", { style: "height:8px;" }),
+    preview,
+    field("Fallback layout", layoutSel),
+    ed.node,
+    errBox,
+    el("div", { class: "actions" }, saveBtn)
+  );
+
+  const close = openModal("Edit device — " + d.id, body, { kicker: "devices" });
+
+  saveBtn.addEventListener("click", async function () {
+    errBox.textContent = "";
+    const channels = (channelsInput.value || "").split(",").map(function (s) { return s.trim(); }).filter(function (s) { return s !== ""; });
+    const payload = {
+      channels: channels,
+      fallback: { layout: layoutSel.value, content: ed.read() },
+      poll_interval_s: Math.max(30, Math.min(3600, Math.round(Number(pollInput.value) || 120))),
+      low_batt_interval_s: Math.max(30, Math.round(Number(lowBattInput.value) || 600))
+    };
+    saveBtn.disabled = true;
+    try {
+      await api("/devices/" + encodeURIComponent(d.id), { method: "PATCH", body: payload });
+      toast("Device " + d.id + " updated", "ok");
+      close();
+      loadDashboard(true);
+    } catch (e) {
+      if (e.status === 401 || e.status === 503) { handleApiError(e); return; }
+      errBox.textContent = formatDetail(e);
+      saveBtn.disabled = false;
     }
   });
 }

@@ -642,7 +642,8 @@ def create_app(
         now = int(time.time())
         out = []
         for e in store.events_for_device_recent(device_id, limit):
-            expires_at = e.received_at + e.ttl_seconds
+            permanent = e.ttl_seconds is None or e.ttl_seconds <= 0
+            expires_at = None if permanent else e.received_at + e.ttl_seconds
             out.append(
                 {
                     "id": e.id,
@@ -652,7 +653,7 @@ def create_app(
                     "layout": e.layout,
                     "received_at": e.received_at,
                     "expires_at": expires_at,
-                    "expired": now >= expires_at,
+                    "expired": (False if permanent else now >= expires_at),
                 }
             )
         return out
