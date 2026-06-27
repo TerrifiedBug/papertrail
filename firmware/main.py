@@ -25,6 +25,8 @@
 # functions so this file imports/compiles on a host too.
 
 import config
+
+_BOOT_COUNT_FILE = getattr(config, "BOOT_COUNT_FILE", "boot_count.txt")  # code const, not device-local
 import render
 
 try:
@@ -98,7 +100,7 @@ def save_interval(seconds):
 # --- crash-loop counter (boot.py's recovery guard increments it each boot) ------
 def load_boot_count():
     try:
-        with open(config.BOOT_COUNT_FILE) as f:
+        with open(_BOOT_COUNT_FILE) as f:
             return int(f.read().strip())
     except Exception:
         return 0
@@ -110,7 +112,7 @@ def clear_boot_count():
     re-runs boot.py which sets it to 1, so we write 0 once per healthy wake)."""
     try:
         if load_boot_count() != 0:
-            with open(config.BOOT_COUNT_FILE, "w") as f:
+            with open(_BOOT_COUNT_FILE, "w") as f:
                 f.write("0")
     except Exception:
         pass

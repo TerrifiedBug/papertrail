@@ -47,6 +47,17 @@ except ImportError:
 import json
 import config
 
+# OTA file/path/behavior constants. These are CODE constants (the OTA wire + on-disk
+# layout), NOT device-local settings — so they default HERE and only read an optional
+# override from config. A device with an OLDER config.py (which OTA never replaces)
+# must not AttributeError on a missing _MANIFEST_FILE etc.
+_MANIFEST_FILE = getattr(config, "MANIFEST_FILE", "manifest.json")
+_MANIFEST_PATH = getattr(config, "FIRMWARE_MANIFEST_PATH", "/api/firmware/manifest")
+_FILE_PATH = getattr(config, "FIRMWARE_FILE_PATH", "/api/firmware/file")
+_BACKUP_DIR = getattr(config, "BACKUP_DIR", "backup")
+_BAD_VERSION_FILE = getattr(config, "BAD_VERSION_FILE", "bad_fw.txt")
+_PENDING_VERSION_FILE = getattr(config, "PENDING_VERSION_FILE", "pending_fw.txt")
+
 
 class OTAError(Exception):
     pass
@@ -162,7 +173,7 @@ def _sha256_hex(data):
 # ==========================================================================
 def _read_local_manifest():
     try:
-        with open(config.MANIFEST_FILE) as f:
+        with open(_MANIFEST_FILE) as f:
             m = json.loads(f.read())
         return m if isinstance(m, dict) else {}
     except Exception:
@@ -187,7 +198,7 @@ def _auth(token):
 
 
 def _get_manifest(base_url, token):
-    url = base_url + config.FIRMWARE_MANIFEST_PATH
+    url = base_url + _MANIFEST_PATH
     resp = urequests.get(url, headers=_auth(token))
     try:
         if resp.status_code != 200:
@@ -200,7 +211,7 @@ def _get_manifest(base_url, token):
 def _get_file(base_url, token, path):
     # `path` is a manifest key the bridge re-validates; '/' in the query value is
     # legal and the stock bridge accepts it (no traversal: server checks membership).
-    url = base_url + config.FIRMWARE_FILE_PATH + "?path=" + path
+    url = base_url + _FILE_PATH + "?path=" + path
     resp = urequests.get(url, headers=_auth(token))
     try:
         if resp.status_code != 200:
@@ -280,15 +291,15 @@ def _rmtree(d):
 
 def _reset_backup_dir():
     """Start the known-good snapshot from a clean slate (only ONE backup is kept)."""
-    _rmtree(config.BACKUP_DIR)
-    _ensure_dir(config.BACKUP_DIR)
+    _rmtree(_BACKUP_DIR)
+    _ensure_dir(_BACKUP_DIR)
 
 
 def _backup(path):
     """Copy a current file into /backup preserving its relative path."""
     if not _exists(path):
         return
-    dst = config.BACKUP_DIR + "/" + path
+    dst = _BACKUP_DIR + "/" + path
     _ensure_parent(dst)
     with open(path, "rb") as f:
         data = f.read()
@@ -298,23 +309,23 @@ def _backup(path):
 def _write_local_manifest(manifest):
     # Atomic: write a temp then rename so a power cut mid-write can't corrupt the
     # commit point. This is the LAST thing apply() does -> defines the new version.
-    tmp = config.MANIFEST_FILE + ".new"
+    tmp = _MANIFEST_FILE + ".new"
     with open(tmp, "w") as f:
         f.write(json.dumps(manifest))
-    os.rename(tmp, config.MANIFEST_FILE)
+    os.rename(tmp, _MANIFEST_FILE)
 
 
 def _read_bad_version():
     """A firmware version boot.py quarantined after it crash-looped, or '' if none."""
     try:
-        with open(config.BAD_VERSION_FILE) as f:
+        with open(_BAD_VERSION_FILE) as f:
             return f.read().strip()
     except Exception:
         return ""
 
 
 def _clear_bad_version():
-    _safe_remove(config.BAD_VERSION_FILE)
+    _safe_remove(_BAD_VERSION_FILE)
 
 
 def _write_pending_version(version):
@@ -323,14 +334,14 @@ def _write_pending_version(version):
     on-disk manifest still names the OLD/good version -- so boot.py must quarantine
     THIS pending version, not the good one, when it recovers. Best-effort."""
     try:
-        with open(config.PENDING_VERSION_FILE, "w") as f:
+        with open(_PENDING_VERSION_FILE, "w") as f:
             f.write(str(version) if version is not None else "")
     except Exception:
         pass
 
 
 def _clear_pending_version():
-    _safe_remove(config.PENDING_VERSION_FILE)
+    _safe_remove(_PENDING_VERSION_FILE)
 
 
 def _cleanup_staged(staged):
@@ -351,7 +362,7 @@ def _sweep_stale_new(d="."):
         typ = entry[1]
         full = name if d == "." else d + "/" + name
         if typ == 0x4000:                   # directory
-            if full == config.BACKUP_DIR:   # never disturb the known-good snapshot
+            if full == _BACKUP_DIR:   # never disturb the known-good snapshot
                 continue
             _sweep_stale_new(full)
         elif name.endswith(".new"):
@@ -424,7 +435,7 @@ def apply(base_url, token):
         _backup(path)
     for path in to_delete:
         _backup(path)
-    _backup(config.MANIFEST_FILE)           # so a restore reverts the VERSION too
+    _backup(_MANIFEST_FILE)           # so a restore reverts the VERSION too
 
     # 5. apply: atomic rename each .new over the old, then delete removed files.
     #    Mark the apply IN-FLIGHT first: from here until the manifest commit the

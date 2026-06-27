@@ -36,10 +36,20 @@ import os
 import json
 import config
 
+# OTA/recovery file + behavior constants (code constants, NOT device-local; default
+# here so an OLDER config.py -- which OTA never replaces -- can't AttributeError).
+_BOOT_COUNT_FILE = getattr(config, "BOOT_COUNT_FILE", "boot_count.txt")
+_BOOT_MAX = getattr(config, "BOOT_MAX_ATTEMPTS", 3)
+_BACKUP_DIR = getattr(config, "BACKUP_DIR", "backup")
+_RECOVERY_IDLE_S = getattr(config, "RECOVERY_IDLE_S", 3600)
+_BAD_VERSION_FILE = getattr(config, "BAD_VERSION_FILE", "bad_fw.txt")
+_PENDING_VERSION_FILE = getattr(config, "PENDING_VERSION_FILE", "pending_fw.txt")
+_MANIFEST_FILE = getattr(config, "MANIFEST_FILE", "manifest.json")
+
 
 def _read_count():
     try:
-        with open(config.BOOT_COUNT_FILE) as f:
+        with open(_BOOT_COUNT_FILE) as f:
             return int(f.read().strip())
     except Exception:
         return 0
@@ -47,7 +57,7 @@ def _read_count():
 
 def _write_count(n):
     try:
-        with open(config.BOOT_COUNT_FILE, "w") as f:
+        with open(_BOOT_COUNT_FILE, "w") as f:
             f.write(str(int(n)))
     except Exception:
         pass
@@ -82,7 +92,7 @@ def _read_pending_version():
     interrupted before it committed -- in which case the on-disk manifest still names
     the OLD/good version, so the pending one is the true suspect."""
     try:
-        with open(config.PENDING_VERSION_FILE) as f:
+        with open(_PENDING_VERSION_FILE) as f:
             return f.read().strip()
     except Exception:
         return ""
@@ -96,10 +106,10 @@ def _record_bad_version():
     try:
         v = _read_pending_version()
         if not v:
-            with open(config.MANIFEST_FILE) as f:
+            with open(_MANIFEST_FILE) as f:
                 v = json.loads(f.read()).get("version")
         if v:
-            with open(config.BAD_VERSION_FILE, "w") as f:
+            with open(_BAD_VERSION_FILE, "w") as f:
                 f.write(v)
             print("boot: quarantined bad version", v)
     except Exception as e:
@@ -156,23 +166,23 @@ def run():
     print("boot: attempt", count)
 
     # Crash-loop guard. Mirrors ota.should_restore(count, BOOT_MAX_ATTEMPTS).
-    if count > config.BOOT_MAX_ATTEMPTS:
+    if count > _BOOT_MAX:
         _record_bad_version()
 
         # No usable /backup -> a restore + reset would just thrash a headless,
         # battery-powered board forever. Idle in a long deepsleep instead (preserve
         # battery; the counter is left high so each wake re-idles until a re-flash /
         # power-cycle heals it).
-        if not _has_restorable_backup(config.BACKUP_DIR):
+        if not _has_restorable_backup(_BACKUP_DIR):
             print("boot: CRASH-LOOP (%d), no usable /backup -> long deepsleep idle"
                   % count)
             if _HW:
-                machine.deepsleep(int(config.RECOVERY_IDLE_S) * 1000)
+                machine.deepsleep(int(_RECOVERY_IDLE_S) * 1000)
             return
 
         print("boot: CRASH-LOOP (%d) -> restoring /backup" % count)
         try:
-            _restore_tree(config.BACKUP_DIR)
+            _restore_tree(_BACKUP_DIR)
         except Exception as e:
             print("boot: restore error:", e)
         _write_count(0)
