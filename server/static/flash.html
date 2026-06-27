@@ -112,6 +112,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function log(m){ const el=$("log"); el.textContent=(el.textContent==="—"?"":el.textContent)+m+"\n"; el.scrollTop=el.scrollHeight; }
 function result(t, ok){ const p=$("result"); p.style.display=""; p.textContent=t; p.className="pill "+(ok?"ok":"bad"); }
 
+let ADMIN = localStorage.getItem("papertrail_admin_token") || "";   // declared before the env-gate IIFE uses it
+
 // --- env gate ------------------------------------------------------------------
 (function(){
   const r=[];
@@ -122,7 +124,6 @@ function result(t, ok){ const p=$("result"); p.style.display=""; p.textContent=t
 })();
 
 // --- admin token (create devices + mint) ---------------------------------------
-let ADMIN = localStorage.getItem("papertrail_admin_token") || "";
 async function adminApi(path, opts){
   opts=opts||{};
   const r=await fetch("/api/admin"+path,{method:opts.method||"GET",

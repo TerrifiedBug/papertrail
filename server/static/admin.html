@@ -916,7 +916,9 @@ function openNewDevice() {
   const lowBattInput = el("input", { class: "inp", type: "number", min: "30", value: "600" });
 
   const layoutSel = selectEl(LAYOUTS, "status_card");
-  const ed = contentEditor("status_card", {}, updatePreview);
+  // Pre-seed the fallback with a sensible idle screen so it isn't blank.
+  const FALLBACK_DEFAULT = { title: "Papertrail", status: "IDLE", subtitle: "Waiting for updates", lines: ["No active messages"], footer: "papertrail" };
+  const ed = contentEditor("status_card", FALLBACK_DEFAULT, updatePreview);
   layoutSel.addEventListener("change", function () { ed.setLayout(layoutSel.value); updatePreview(); });
   const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
   function updatePreview() { renderPreview(preview, layoutSel.value, ed.read()); }
