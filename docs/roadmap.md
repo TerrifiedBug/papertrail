@@ -24,6 +24,30 @@ Configure + flash a Pico from the browser — no MicroPico, no hand-edited `secr
   flasher as a **standalone HTTPS static page** (the ESP-Web-Tools pattern) that runs serial
   locally and calls the admin API over CORS. Prior art: ViperIDE, `micropython/webrepl`.
 
+## OTA firmware updates (next big build)
+
+Keep deployed Picos current without USB. The web flasher only writes config, so a
+device runs whatever firmware was last uploaded — it drifts from the repo. OTA closes
+that gap from the bridge.
+
+- **Bridge serves firmware:** `GET /api/firmware/manifest` → `{version, files:[{path, sha256}]}`;
+  `GET /api/firmware/files/<path>` → content (device-token auth, LAN). Firmware bundled
+  into the image (CI builds from the repo). [Packaging: `COPY firmware/` into the image +
+  a small serve route.]
+- **Device:** on boot / every N polls, fetch the manifest, diff `sha256` vs a local
+  `version.txt`. For each changed file: download → write `<path>.new` → verify hash →
+  atomic rename → bump version → reset. The poll's `control` block can carry `fw_latest`
+  so the device knows an update is waiting (it already reports `fw` via telemetry).
+- **Safety (OTA can brick a device):** atomic writes + per-file hash; a **recovery boot
+  guard** (crash-loop → roll back to the known-good copy — the old project's `recovery.py`
+  pattern); staged rollout (one device first); never half-write the updater itself.
+- **Dashboard:** already receives each device's `fw` → show version spread + a "push
+  update" action.
+- Prior art: the user's earlier `pico/ota_updater.py` + `recovery.py` (GitHub-sourced OTA).
+
+Companion: **Layer A.2** — have the web flasher also upload the firmware `.py` set over
+serial, so a USB-in-hand provision lands the latest code + config in one go.
+
 ## Sticky-by-default events (DECIDED — build next)
 
 Change the expiry model so a display keeps the **last webhook until it's replaced**, rather
