@@ -9,6 +9,7 @@ on:
     tags: ['v*']
     paths:
       - 'server/**'
+      - 'firmware/**'                 # bundled into the image + served via OTA -> must rebuild
       - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
 
