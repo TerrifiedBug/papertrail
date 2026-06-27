@@ -1,0 +1,20 @@
+{
+  "schema": "pico-paper.v1",
+  "id": "evt_list_0001",
+  "device": "kitchen-01",
+  "channel": "home.tasks",
+  "priority": 30,
+  "ttl_seconds": 86400,
+  "layout": "list",
+  "content": {
+    "title": "Shopping",
+    "items": [
+      "Milk",
+      "Eggs",
+      "Coffee beans",
+      "Bread",
+      "Dish soap"
+    ],
+    "footer": "5 items"
+  }
+}

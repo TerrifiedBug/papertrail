@@ -1,0 +1,483 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "papertrail bridge",
+    "description": "Always-on Pico <-> webhook bridge for the **pico-paper.v1** wire contract. Ingest validated events, resolve the current screen per device, and serve it to a Waveshare Pico ePaper over LAN HTTP with ETag / If-None-Match polling. The poll piggybacks optional telemetry and carries a `control` block for remote settings (e.g. poll_interval).",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://papertrail.example.com",
+      "description": "Caddy HTTPS ingest (internet-facing POST /events)."
+    },
+    {
+      "url": "http://papertrail.lan:8000",
+      "description": "LAN HTTP poll (Pico GET /current, direct, no TLS)."
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Healthz",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Healthz Healthz Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{device_id}/events": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Ingest",
+        "operationId": "ingest_api_devices__device_id__events_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "examples": {
+                "status_card": {
+                  "summary": "status_card event",
+                  "value": {
+                    "schema": "pico-paper.v1",
+                    "id": "evt_example_0001",
+                    "device": "kitchen-01",
+                    "channel": "home.status",
+                    "priority": 50,
+                    "ttl_seconds": 900,
+                    "layout": "status_card",
+                    "content": {
+                      "title": "Home Server",
+                      "status": "OK",
+                      "subtitle": "All services nominal",
+                      "lines": [
+                        "CPU      12%",
+                        "RAM      41%",
+                        "Disk     63%"
+                      ],
+                      "footer": "updated 14:02"
+                    }
+                  }
+                },
+                "alert": {
+                  "summary": "alert event",
+                  "value": {
+                    "schema": "pico-paper.v1",
+                    "id": "evt_example_0001",
+                    "device": "kitchen-01",
+                    "channel": "home.status",
+                    "priority": 50,
+                    "ttl_seconds": 900,
+                    "layout": "alert",
+                    "content": {
+                      "severity": "high",
+                      "title": "Water Leak",
+                      "message": "Sensor under the sink detected moisture.",
+                      "footer": "basement-sensor-3"
+                    }
+                  }
+                },
+                "list": {
+                  "summary": "list event",
+                  "value": {
+                    "schema": "pico-paper.v1",
+                    "id": "evt_example_0001",
+                    "device": "kitchen-01",
+                    "channel": "home.status",
+                    "priority": 50,
+                    "ttl_seconds": 900,
+                    "layout": "list",
+                    "content": {
+                      "title": "Shopping",
+                      "items": [
+                        "Milk",
+                        "Eggs",
+                        "Coffee beans"
+                      ],
+                      "footer": "3 items"
+                    }
+                  }
+                },
+                "metric": {
+                  "summary": "metric event",
+                  "value": {
+                    "schema": "pico-paper.v1",
+                    "id": "evt_example_0001",
+                    "device": "kitchen-01",
+                    "channel": "home.status",
+                    "priority": 50,
+                    "ttl_seconds": 900,
+                    "layout": "metric",
+                    "content": {
+                      "label": "Solar output",
+                      "value": "3.42",
+                      "unit": "kW",
+                      "trend": "UP +0.4 kW vs 1h",
+                      "footer": "inverter-A"
+                    }
+                  }
+                },
+                "qr": {
+                  "summary": "qr event",
+                  "value": {
+                    "schema": "pico-paper.v1",
+                    "id": "evt_example_0001",
+                    "device": "kitchen-01",
+                    "channel": "home.status",
+                    "priority": 50,
+                    "ttl_seconds": 900,
+                    "layout": "qr",
+                    "content": {
+                      "title": "Guest WiFi",
+                      "qr_data": "WIFI:T:WPA;S:GuestNet;P:welcome123;;",
+                      "caption": "Scan to join GuestNet. Valid for 12 hours."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{device_id}/current": {
+      "get": {
+        "tags": [
+          "device"
+        ],
+        "summary": "Get Current",
+        "operationId": "get_current_api_devices__device_id__current_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "batt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "battery %, clamped 0..100",
+              "title": "Batt"
+            },
+            "description": "battery %, clamped 0..100"
+          },
+          {
+            "name": "rssi",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "wifi RSSI dBm, clamped -120..0",
+              "title": "Rssi"
+            },
+            "description": "wifi RSSI dBm, clamped -120..0"
+          },
+          {
+            "name": "fw",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "firmware id, <=16 chars [A-Za-z0-9._-]",
+              "title": "Fw"
+            },
+            "description": "firmware id, <=16 chars [A-Za-z0-9._-]"
+          },
+          {
+            "name": "up",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "uptime seconds, >=0",
+              "title": "Up"
+            },
+            "description": "uptime seconds, >=0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resolved screen + additive control block.",
+            "content": {
+              "application/json": {
+                "schema": {},
+                "example": {
+                  "schema": "pico-paper.v1",
+                  "device": "kitchen-01",
+                  "layout": "status_card",
+                  "content": {
+                    "title": "Papertrail",
+                    "status": "IDLE",
+                    "subtitle": "Waiting for updates",
+                    "lines": [
+                      "No active messages"
+                    ],
+                    "footer": "papertrail"
+                  },
+                  "control": {
+                    "poll_interval": 120
+                  },
+                  "etag": "c0ffee...",
+                  "rendered_at": 1750000000
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified (If-None-Match matched the ETag)."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{device_id}/config": {
+      "patch": {
+        "tags": [
+          "device"
+        ],
+        "summary": "Set Config",
+        "description": "Remote device control. Body: {\"poll_interval\": N}. The deep-sleep\ninterval is CLAMPED to [30, 3600]s; non-int/missing -> 422. Authed with\nthe device's OWN device token (same kind the Pico polls with).",
+        "operationId": "set_config_api_devices__device_id__config_patch",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/{device_id}/status": {
+      "get": {
+        "tags": [
+          "telemetry"
+        ],
+        "summary": "Get Status",
+        "description": "Stored telemetry + last_seen_at for the dashboard (device token).",
+        "operationId": "get_status_api_devices__device_id__status_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "ingest",
+      "description": "POST webhook events into the bridge (ingest token)."
+    },
+    {
+      "name": "device",
+      "description": "Pico-facing screen poll + remote device control (device token)."
+    },
+    {
+      "name": "telemetry",
+      "description": "Stored device telemetry for the dashboard (device token)."
+    },
+    {
+      "name": "ops",
+      "description": "Operational / liveness endpoints (no auth)."
+    }
+  ]
+}

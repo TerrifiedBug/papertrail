@@ -1,0 +1,21 @@
+{
+  "schema": "pico-paper.v1",
+  "id": "evt_status_0001",
+  "device": "kitchen-01",
+  "channel": "home.status",
+  "priority": 50,
+  "ttl_seconds": 900,
+  "layout": "status_card",
+  "content": {
+    "title": "Home Server",
+    "status": "OK",
+    "subtitle": "All services nominal",
+    "lines": [
+      "CPU      12%",
+      "RAM      41%",
+      "Disk     63%",
+      "Uptime   18d 4h"
+    ],
+    "footer": "updated 14:02"
+  }
+}

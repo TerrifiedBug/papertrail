@@ -1,0 +1,16 @@
+{
+  "schema": "pico-paper.v1",
+  "id": "evt_metric_0001",
+  "device": "office-01",
+  "channel": "energy",
+  "priority": 40,
+  "ttl_seconds": 300,
+  "layout": "metric",
+  "content": {
+    "label": "Solar output",
+    "value": "3.42",
+    "unit": "kW",
+    "trend": "UP +0.4 kW vs 1h",
+    "footer": "inverter-A"
+  }
+}

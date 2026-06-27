@@ -1,0 +1,31 @@
+# Homelab DEPLOY compose -- pulls the prebuilt bridge image from GHCR (built by the
+# CI workflow on push to main). For LOCAL development that builds from source, use
+# server/docker-compose.yml instead.
+#
+# Setup on the homelab:
+#   1. mkdir -p ./data  &&  cp your real seed.json to ./data/seed.json   (gitignored)
+#   2. docker compose up -d
+#   3. front it with your Caddy (papertrail.terrifiedbug.com -> :8000) for the public
+#      /api/devices/*/events ingest only; the Pico polls http://<homelab-ip>:8000/...
+#      /current directly over the LAN (plain HTTP, no Caddy).
+#
+# Private GHCR image -> the host must `docker login ghcr.io` once with a PAT
+# (read:packages), or set the package visibility to public.
+services:
+  papertrail:
+    image: ghcr.io/terrifiedbug/papertrail:latest
+    container_name: papertrail
+    restart: unless-stopped
+    ports:
+      - "8000:8000"            # LAN HTTP for the Pico; bind to a LAN IP if desired
+    environment:
+      PAPERTRAIL_DB: /data/papertrail.db
+      PAPERTRAIL_SEED_FILE: /data/seed.json
+      PAPERTRAIL_MAX_BODY_BYTES: "8192"
+    volumes:
+      - ./data:/data           # ./data/seed.json bootstraps tokens/devices; db lives here
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

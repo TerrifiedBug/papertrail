@@ -1,0 +1,40 @@
+{
+  "_comment": "Canonical device config. Server owns: channels, fallback, poll_interval_s, low_batt_interval_s. Pico owns local-only knobs: server_url + tokens come from secrets (never committed), epaper_rev, battery.*. See SCHEMA.md sec 7 and docs/layout-specs.md sec 6.",
+
+  "id": "kitchen-01",
+  "channels": [
+    "home.status",
+    "home.alerts",
+    "home.tasks"
+  ],
+
+  "fallback": {
+    "layout": "status_card",
+    "content": {
+      "title": "Papertrail",
+      "status": "IDLE",
+      "subtitle": "Waiting for updates",
+      "lines": [
+        "No active messages"
+      ],
+      "footer": "papertrail"
+    }
+  },
+
+  "poll_interval_s": 120,
+  "low_batt_interval_s": 600,
+
+  "firmware": {
+    "_comment": "Local-only Pico knobs. server_url and the device bearer token live in secrets.example.py, NOT here.",
+    "epaper_rev": "V4",
+    "battery": {
+      "i2c_bus": 1,
+      "i2c_sda_gp": 6,
+      "i2c_scl_gp": 7,
+      "ina219_addr": "0x43",
+      "v_min": 3.0,
+      "v_max": 4.2,
+      "low_pct": 15
+    }
+  }
+}

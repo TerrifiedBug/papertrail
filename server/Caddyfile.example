@@ -1,0 +1,40 @@
+# Caddy reverse proxy + automatic TLS for EXTERNAL webhook sources.
+#
+# Note: the Pico polls the bridge over plain LAN HTTP directly
+# (http://<lan-ip>:8000/api/devices/<id>/current) and does NOT go through Caddy
+# — MicroPython TLS on a Pico is painful and the LAN is the trust boundary.
+# Caddy is only for internet-facing POST /events from cloud sources.
+#
+# Copy to `Caddyfile`, set your domain, and run `caddy run`.
+
+papertrail.example.com {
+    encode zstd gzip
+
+    # Only expose the ingest endpoint to the internet; keep /current LAN-only.
+    @ingest path /api/devices/*/events
+    handle @ingest {
+        # Edge defense-in-depth: cap the body at 8 KB before it ever reaches the
+        # app (the app also enforces an 8 KiB streaming cap -> 413).
+        request_body {
+            max_size 8KB
+        }
+        # The app's rate limiter is keyed on a VALID token, so it does NOT throttle
+        # missing/unknown/malformed-token floods (those fail auth first). Cap that
+        # at the edge. Needs the caddy-ratelimit module (xcaddy build
+        # --with github.com/mholt/caddy-ratelimit); or front with fail2ban on 401s.
+        # rate_limit {
+        #     zone ingest { key {remote_host}; events 60; window 1m }
+        # }
+        reverse_proxy localhost:8000
+    }
+
+    # Health check (optional, public).
+    handle /healthz {
+        reverse_proxy localhost:8000
+    }
+
+    # Everything else (including /current) is not served publicly.
+    handle {
+        respond "not found" 404
+    }
+}

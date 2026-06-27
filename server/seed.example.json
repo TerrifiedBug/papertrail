@@ -1,0 +1,36 @@
+{
+  "_comment": "EXAMPLE seed. Copy to seed.json (gitignored) and replace token values with real high-entropy secrets. Tokens are plaintext here and stored only as sha256 by the server.",
+  "devices": [
+    {
+      "id": "kitchen-01",
+      "channels": ["home.status", "home.alerts", "home.tasks"],
+      "fallback": {
+        "layout": "status_card",
+        "content": {
+          "title": "Papertrail",
+          "status": "IDLE",
+          "subtitle": "Waiting for updates",
+          "lines": ["No active messages"],
+          "footer": "papertrail"
+        }
+      },
+      "poll_interval_s": 120,
+      "low_batt_interval_s": 600
+    }
+  ],
+  "tokens": [
+    {
+      "token": "REPLACE_ME_device_token_kitchen01",
+      "kind": "device",
+      "device_id": "kitchen-01",
+      "rate_per_min": 60
+    },
+    {
+      "token": "REPLACE_ME_ingest_token_kitchen01",
+      "kind": "ingest",
+      "device_id": "kitchen-01",
+      "channels": null,
+      "rate_per_min": 120
+    }
+  ]
+}

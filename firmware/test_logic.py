@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+# Host-runnable (CPython) tests for papertrail firmware PURE logic.
+# No test framework, no hardware: plain asserts. Run:
+#
+#     python3 firmware/test_logic.py
+#
+# Covers the things the contract cares about:
+#   1. battery bus-voltage -> % curve, incl. clamping below v_min / above v_max
+#   2. the ETag no-op decision (render ONLY when the screen actually changed)
+#   3. per-layout field selection + truncation/wrapping (via a recording canvas)
+#   4. the additive v1 control/telemetry plane:
+#        - poll_interval local clamp to [30,3600] (don't trust the server blindly)
+#        - the schema-version guard (v1 renders; a future v2 -> offline, never drawn)
+#        - telemetry query-string construction (?batt=&rssi=&fw=&up=)
+#
+# These modules import on a host because their hardware imports are guarded:
+#   ina219 (machine), poller (urequests), render (framebuf), qr->uQR (ure).
+
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import ina219
+import poller
+import render
+
+INK = render.INK
+PAPER = render.PAPER
+
+
+# --------------------------------------------------------------------------
+# Recording canvas: captures draw ops so we can assert geometry + field choice.
+# --------------------------------------------------------------------------
+class RecordingCanvas:
+    def __init__(self):
+        self.ops = []
+
+    def fill(self, color):
+        self.ops.append(("fill", color))
+
+    def text(self, s, x, y, color, n=1):
+        self.ops.append(("text", s, x, y, color, n))
+
+    def hline(self, y, color=INK):
+        self.ops.append(("hline", y, color))
+
+    def rect(self, x, y, w, h, color, fill=False):
+        self.ops.append(("rect", x, y, w, h, color, fill))
+
+    def pixel(self, x, y, color):
+        self.ops.append(("pixel", x, y, color))
+
+    def texts(self):
+        return [o for o in self.ops if o[0] == "text"]
+
+    def text_strings(self):
+        return [o[1] for o in self.ops if o[0] == "text"]
+
+    def has_text(self, s, x=None, y=None, color=None, n=None):
+        for o in self.texts():
+            if o[1] != s:
+                continue
+            if x is not None and o[2] != x:
+                continue
+            if y is not None and o[3] != y:
+                continue
+            if color is not None and o[4] != color:
+                continue
+            if n is not None and o[5] != n:
+                continue
+            return True
+        return False
+
+    def has_rect(self, x, y, w, h, color, fill):
+        return ("rect", x, y, w, h, color, fill) in self.ops
+
+    def has_hline(self, y):
+        return any(o[0] == "hline" and o[1] == y for o in self.ops)
+
+
+# --------------------------------------------------------------------------
+# 1. Battery voltage -> % curve
+# --------------------------------------------------------------------------
+def test_battery_curve():
+    vmin, vmax = 3.0, 4.2
+    assert ina219.voltage_to_pct(3.0, vmin, vmax) == 0, "v_min -> 0%"
+    assert ina219.voltage_to_pct(4.2, vmin, vmax) == 100, "v_max -> 100%"
+    # clamping
+    assert ina219.voltage_to_pct(2.5, vmin, vmax) == 0, "below v_min clamps to 0"
+    assert ina219.voltage_to_pct(0.0, vmin, vmax) == 0, "way below clamps to 0"
+    assert ina219.voltage_to_pct(4.5, vmin, vmax) == 100, "above v_max clamps to 100"
+    assert ina219.voltage_to_pct(9.9, vmin, vmax) == 100, "way above clamps to 100"
+    # linear interior (chosen to avoid .5 rounding ambiguity)
+    assert ina219.voltage_to_pct(3.6, vmin, vmax) == 50, "midpoint -> 50%"
+    assert ina219.voltage_to_pct(3.3, vmin, vmax) == 25, "quarter -> 25%"
+    assert ina219.voltage_to_pct(3.9, vmin, vmax) == 75, "three-quarter -> 75%"
+    assert ina219.voltage_to_pct(3.66, vmin, vmax) == 55, "0.55 -> 55%"
+    # degenerate config guard
+    assert ina219.voltage_to_pct(3.6, 4.0, 4.0) == 0, "v_max<=v_min guarded"
+    # low threshold
+    assert ina219.is_low(15, 15) is True, "at threshold is low"
+    assert ina219.is_low(10, 15) is True, "below threshold is low"
+    assert ina219.is_low(16, 15) is False, "above threshold not low"
+
+
+def test_on_battery_detection():
+    # discharging (negative shunt, default sign) => on battery
+    assert ina219.is_on_battery(-15.0, 1, 2.0) is True, "discharge -> on battery"
+    assert ina219.is_on_battery(-2.5, 1, 2.0) is True, "small discharge past noise"
+    # charging / plugged (positive shunt) => not on battery
+    assert ina219.is_on_battery(20.0, 1, 2.0) is False, "charging -> plugged"
+    # idle/full plugged: near-zero current stays plugged (avoids false deepsleep)
+    assert ina219.is_on_battery(0.5, 1, 2.0) is False, "near-zero -> plugged"
+    assert ina219.is_on_battery(-1.0, 1, 2.0) is False, "within noise band -> plugged"
+    # reversed shunt wiring: charge_sign=-1 flips the convention
+    assert ina219.is_on_battery(15.0, -1, 2.0) is True, "flipped sign: +shunt is discharge"
+    assert ina219.is_on_battery(-15.0, -1, 2.0) is False, "flipped sign: -shunt is charge"
+
+
+# --------------------------------------------------------------------------
+# 2. ETag no-op decision
+# --------------------------------------------------------------------------
+def test_etag_decision():
+    # 304 -> never touch the panel
+    assert poller.decide_action(304, None, "abc") == ("skip", "abc")
+    # 200 with the same etag -> still skip (belt and braces)
+    assert poller.decide_action(200, "abc", "abc") == ("skip", "abc")
+    # 200 with a new etag -> render + adopt the new etag
+    assert poller.decide_action(200, "def", "abc") == ("render", "def")
+    # first fetch (no prior etag) -> render
+    assert poller.decide_action(200, "def", "") == ("render", "def")
+    # errors -> offline, keep the old etag
+    assert poller.decide_action(500, None, "abc") == ("offline", "abc")
+    assert poller.decide_action(401, None, "x") == ("offline", "x")
+    assert poller.decide_action(404, None, "") == ("offline", "")
+
+
+# --------------------------------------------------------------------------
+# 2b. Remote poll-interval clamp (control.poll_interval; never trust the server)
+# --------------------------------------------------------------------------
+def test_poll_interval_clamp():
+    # in-band values pass through unchanged, incl. the exact boundaries
+    assert poller.clamp_interval(120) == 120, "in-band unchanged"
+    assert poller.clamp_interval(30) == 30, "lower bound kept"
+    assert poller.clamp_interval(3600) == 3600, "upper bound kept"
+    # below the floor -> clamped up to 30
+    assert poller.clamp_interval(29) == 30, "just below floor -> 30"
+    assert poller.clamp_interval(5) == 30, "well below floor -> 30"
+    assert poller.clamp_interval(0) == 30, "zero -> 30"
+    assert poller.clamp_interval(-50) == 30, "negative -> 30"
+    # above the ceiling -> clamped down to 3600
+    assert poller.clamp_interval(3601) == 3600, "just above ceiling -> 3600"
+    assert poller.clamp_interval(99999) == 3600, "well above ceiling -> 3600"
+    # liberal coercion of numeric-ish inputs
+    assert poller.clamp_interval("300") == 300, "numeric string coerced"
+    assert poller.clamp_interval(45.0) == 45, "float coerced to int"
+    # non-int / missing -> None so the caller keeps its configured default
+    assert poller.clamp_interval(None) is None, "missing -> None"
+    assert poller.clamp_interval("soon") is None, "non-numeric string -> None"
+    assert poller.clamp_interval({}) is None, "wrong type (dict) -> None"
+    assert poller.clamp_interval([30]) is None, "wrong type (list) -> None"
+
+
+# --------------------------------------------------------------------------
+# 2c. Schema-version guard (a future pico-paper.v2 must NOT hit v1 renderers)
+# --------------------------------------------------------------------------
+def test_schema_version_guard():
+    V1 = "pico-paper.v1"
+    # v1 body, new etag -> render normally
+    assert poller.decide_action(200, "new", "old", V1) == ("render", "new")
+    # v1 body, same etag -> still de-dupes to skip
+    assert poller.decide_action(200, "same", "same", V1) == ("skip", "same")
+    # a future/unknown schema on a 200 -> offline (do NOT render against v1)
+    assert poller.decide_action(200, "new", "old", "pico-paper.v2") == ("offline", "old")
+    assert poller.decide_action(200, "new", "old", "pico-paper.v99") == ("offline", "old")
+    # schema omitted (None) -> backwards-compatible, behaves exactly as before
+    assert poller.decide_action(200, "new", "old", None) == ("render", "new")
+    assert poller.decide_action(200, "new", "old") == ("render", "new")
+    # 304 short-circuits before the schema check (no body to inspect)
+    assert poller.decide_action(304, None, "keep", "pico-paper.v2") == ("skip", "keep")
+
+
+# --------------------------------------------------------------------------
+# 2d. Telemetry query-string construction (?batt=&rssi=&fw=&up=)
+# --------------------------------------------------------------------------
+def test_telemetry_query_string():
+    # full set, fixed key order: batt, rssi, fw, up
+    q = poller.build_query({"batt": 83, "rssi": -61, "fw": "pt-1.0.0", "up": 43200})
+    assert q == "?batt=83&rssi=-61&fw=pt-1.0.0&up=43200", "full ordered query"
+    # rssi unavailable (None) is omitted; the rest keep their order
+    assert poller.build_query({"batt": 50, "rssi": None, "fw": "pt-1.0.0", "up": 10}) \
+        == "?batt=50&fw=pt-1.0.0&up=10", "None rssi dropped"
+    # battery gauge unreadable (None batt) dropped; up=0 is still a real value
+    assert poller.build_query({"batt": None, "rssi": -40, "fw": "x", "up": 0}) \
+        == "?rssi=-40&fw=x&up=0", "None batt dropped, up=0 still sent"
+    # ints coerced from float/string
+    assert poller.build_query({"batt": 77.0, "up": "5"}) == "?batt=77&up=5", "coercion"
+    # fw sanitised to the [A-Za-z0-9._-] charset, capped at 16 chars
+    assert poller.build_query({"fw": "v1.2 beta/!"}) == "?fw=v1.2beta", "fw charset stripped"
+    assert poller.build_query({"fw": "a" * 40}) == "?fw=" + "a" * 16, "fw capped at 16"
+    # an fw that sanitises to empty contributes no key at all
+    assert poller.build_query({"fw": "!!!"}) == "", "all-bad fw -> dropped"
+    # nothing to send -> empty string (never a bare '?')
+    assert poller.build_query({}) == "", "empty dict -> no query"
+    assert poller.build_query(None) == "", "None telemetry -> no query"
+
+
+# --------------------------------------------------------------------------
+# 3a. clip / wrap helpers
+# --------------------------------------------------------------------------
+def test_clip():
+    assert render.clip("hello", 10) == "hello", "short unchanged"
+    assert render.clip("exactly!", 8) == "exactly!", "len==N unchanged"
+    assert render.clip("HelloWorld", 8) == "Hello...", "truncate -> trailing ..."
+    assert len(render.clip("HelloWorld", 8)) == 8, "clip length == N"
+    assert render.clip("abc", 3) == "abc", "len==N==3 unchanged"
+    assert render.clip("abcd", 3) == "abc", "N<=3 hard cut, no dots"
+    assert render.clip("", 5) == "", "empty stays empty"
+    assert render.clip(None, 5) == "", "None coerced to empty"
+
+
+def test_wrap():
+    assert render.wrap("a b c", 30, 4) == ["a b c"], "fits one line"
+    assert render.wrap("aaaa bbbb cccc", 9, 4) == ["aaaa bbbb", "cccc"], "greedy fill"
+    # long word hard-split
+    assert render.wrap("abcdefghij", 4, 4) == ["abcd", "efgh", "ij"], "hard split"
+    # overflow -> last shown line clipped with trailing ...
+    out = render.wrap("one two three four five six seven", 5, 2)
+    assert len(out) == 2, "capped at L lines"
+    assert out[0] == "one", "first line greedy"
+    assert out[-1].endswith("..."), "overflow line gets ..."
+    assert all(len(line) <= 5 for line in out), "every line within width"
+
+
+# --------------------------------------------------------------------------
+# 3b. per-layout field selection + truncation (recording canvas)
+# --------------------------------------------------------------------------
+def test_status_card_fields():
+    c = RecordingCanvas()
+    render.render_status_card(c, {
+        "title": "Home Server Rack",          # 16 chars -> clip12
+        "status": "DOWN!!!!",                  # 8 chars  -> unchanged, right-aligned
+        "subtitle": "s" * 40,                  # -> clip30
+        "lines": ["L0", "L1", "L2", "L3", "L4", "L5", "L6"],  # only 5 shown
+        "footer": "f" * 40,                    # -> clip30
+    })
+    # title S2 at (4,2), clipped to 12 with trailing ...
+    assert c.has_text("Home Serv...", 4, 2, INK, 2), "title clip12 @ (4,2) S2"
+    # status S1 right-aligned: x = 246 - 8*len(status) = 246-64 = 182
+    assert c.has_text("DOWN!!!!", 182, 6, INK, 1), "status right-aligned @ x=182"
+    # subtitle clip30 at (4,25)
+    assert c.has_text("s" * 27 + "...", 4, 25, INK, 1), "subtitle clip30 @ (4,25)"
+    # exactly 5 lines, at y = 40,51,62,73,84
+    for i in range(5):
+        assert c.has_text("L%d" % i, 4, 40 + 11 * i, INK, 1), "line %d row" % i
+    assert not c.has_text("L5"), "6th line dropped"
+    assert not c.has_text("L6"), "7th line dropped"
+    # footer clip30 at (4,110)
+    assert c.has_text("f" * 27 + "...", 4, 110, INK, 1), "footer clip30 @ (4,110)"
+    # separators
+    assert c.has_hline(20) and c.has_hline(100), "both rules drawn"
+    # cleared to PAPER first
+    assert c.ops[0] == ("fill", PAPER), "frame cleared to PAPER"
+
+
+def test_metric_centering():
+    c = RecordingCanvas()
+    render.render_metric(c, {
+        "label": "Solar output",
+        "value": "3.42",                       # 4 chars -> value_px=128
+        "unit": "kW",                          # 2 chars -> unit_px=32, gap=6
+        "trend": "UP",
+        "footer": "inverter-A",
+    })
+    # group=128+6+32=166 -> x_v=(250-166)//2=42; x_u=42+128+6=176
+    assert c.has_text("3.42", 42, 34, INK, 4), "value S4 centered @ x_v=42"
+    assert c.has_text("kW", 176, 50, INK, 2), "unit S2 @ x_u=176 y=50"
+    # trend centered: x_t=(250-8*2)//2=117
+    assert c.has_text("UP", 117, 82, INK, 1), "trend centered @ x_t=117"
+    assert c.has_hline(18) and c.has_hline(100), "metric rules"
+
+    # value truncation to 7 + empty unit (no unit op, gap=0)
+    c2 = RecordingCanvas()
+    render.render_metric(c2, {"label": "x", "value": "1234567890",
+                              "unit": "", "trend": "FLAT", "footer": "y"})
+    # clip("1234567890",7) = "1234..." ; value_px=32*7=224 ; x_v=(250-224)//2=13
+    assert c2.has_text("1234...", 13, 34, INK, 4), "value clip7 centered, no unit"
+    assert not any(o[5] == 2 for o in c2.texts()), "no S2 unit op when unit empty"
+
+
+def test_list_fields():
+    c = RecordingCanvas()
+    render.render_list(c, {
+        "title": "Shopping",
+        "items": ["X" * 30, "i1", "i2", "i3", "i4", "i5", "i6", "i7"],  # 6 shown
+        "footer": "8 items",
+    })
+    # checkbox + first item at row y=26; item clipped to 26 chars
+    assert c.has_text("[ ] ", 4, 26, INK, 1), "decorative checkbox @ (4,26)"
+    assert c.has_text("X" * 23 + "...", 36, 26, INK, 1), "item clip26 @ (36,26)"
+    # six checkbox rows at y = 26,38,50,62,74,86
+    for i in range(6):
+        assert c.has_text("[ ] ", 4, 26 + 12 * i, INK, 1), "checkbox row %d" % i
+    # 7th/8th items dropped
+    assert not c.has_text("i6") and not c.has_text("i7"), "items beyond 6 dropped"
+
+
+def test_alert_high_inversion():
+    c = RecordingCanvas()
+    render.render_alert(c, {
+        "severity": "high",
+        "title": "Water Leak",
+        "message": "Sensor under the sink detected moisture everywhere now",
+        "footer": "basement-sensor-3",
+    })
+    # solid INK banner rect (filled) + label drawn in PAPER
+    assert c.has_rect(0, 0, 250, 28, INK, True), "high banner is solid INK fill"
+    assert c.has_text("!! HIGH", 4, 6, PAPER, 2), "high label drawn in PAPER"
+    # 2px whole-screen frame = two outlines
+    assert c.has_rect(0, 0, 250, 122, INK, False), "outer frame outline"
+    assert c.has_rect(1, 1, 248, 120, INK, False), "inner frame outline"
+    # title S2 at (4,34)
+    assert c.has_text("Water Leak", 4, 34, INK, 2), "title @ (4,34) S2"
+    # message wraps to <=4 lines starting y=58 step 11
+    msg_ys = [o[3] for o in c.texts() if o[3] in (58, 69, 80, 91)]
+    assert len(msg_ys) >= 1, "message wrapped into the message band"
+    assert c.has_hline(100), "footer rule always drawn"
+
+
+def test_alert_low_no_inversion():
+    c = RecordingCanvas()
+    render.render_alert(c, {"severity": "low", "title": "Door",
+                            "message": "open", "footer": "x"})
+    assert c.has_text("LOW", 4, 6, INK, 2), "low label INK (not inverted)"
+    assert c.has_hline(28), "low draws underline at y=28"
+    assert not c.has_rect(0, 0, 250, 28, INK, True), "low has no solid banner"
+    assert not c.has_rect(0, 0, 250, 122, INK, False), "low has no frame"
+
+
+def test_alert_severity_labels():
+    for sev, label in (("low", "LOW"), ("med", "MED"), ("high", "!! HIGH")):
+        c = RecordingCanvas()
+        render.render_alert(c, {"severity": sev, "title": "t",
+                                "message": "m", "footer": "f"})
+        col = PAPER if sev == "high" else INK
+        assert c.has_text(label, 4, 6, col, 2), "severity %s -> %r" % (sev, label)
+
+
+def test_dispatch_and_offline():
+    # unknown layout -> offline screen (status_card under the hood), returns False
+    c = RecordingCanvas()
+    ok = render.render(c, "totally_bogus", {})
+    assert ok is False, "unknown layout returns False"
+    assert c.has_text("Offline", 4, 2, INK, 2), "offline title rendered"
+    # known layout dispatches and returns True
+    c2 = RecordingCanvas()
+    ok2 = render.render(c2, "metric", {"label": "a", "value": "1",
+                                       "unit": "", "trend": "", "footer": ""})
+    assert ok2 is True, "known layout returns True"
+
+
+def test_qr_end_to_end():
+    # Exercises the real vendored uQR path: matrix -> module rects + wrapped caption.
+    c = RecordingCanvas()
+    render.render_qr(c, {
+        "title": "Guest WiFi",
+        "qr_data": "WIFI:T:WPA;S:GuestNet;P:welcome123;;",
+        "caption": "Scan to join GuestNet now please",
+    })
+    assert c.has_text("Guest WiFi", 4, 2, INK, 2), "qr title @ (4,2) S2"
+    module_rects = [o for o in c.ops if o[0] == "rect" and o[6] is True]
+    assert len(module_rects) > 20, "QR modules drawn as filled INK rects"
+    # caption wraps at width 17 beside the QR, first line at (104,30)
+    cap = [o for o in c.texts() if o[2] == 104 and o[3] == 30]
+    assert len(cap) == 1 and len(cap[0][1]) <= 17, "caption first line @ (104,30) <=17"
+
+
+TESTS = [
+    test_battery_curve,
+    test_etag_decision,
+    test_poll_interval_clamp,
+    test_schema_version_guard,
+    test_telemetry_query_string,
+    test_clip,
+    test_wrap,
+    test_status_card_fields,
+    test_metric_centering,
+    test_list_fields,
+    test_alert_high_inversion,
+    test_alert_low_no_inversion,
+    test_alert_severity_labels,
+    test_dispatch_and_offline,
+    test_qr_end_to_end,
+    test_on_battery_detection,
+]
+
+
+def main():
+    passed = 0
+    failed = 0
+    for t in TESTS:
+        try:
+            t()
+            print("PASS  " + t.__name__)
+            passed += 1
+        except AssertionError as e:
+            print("FAIL  " + t.__name__ + ": " + str(e))
+            failed += 1
+        except Exception as e:
+            print("ERROR " + t.__name__ + ": " + repr(e))
+            failed += 1
+    print("\n%d passed, %d failed, %d total" % (passed, failed, len(TESTS)))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

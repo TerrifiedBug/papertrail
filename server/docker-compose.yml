@@ -1,0 +1,29 @@
+# Always-on bridge. The Pico polls this over LAN HTTP directly; external
+# webhook sources go through Caddy (see Caddyfile.example) for TLS.
+services:
+  papertrail:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: papertrail:latest
+    restart: unless-stopped
+    ports:
+      # LAN HTTP for the Pico. Bind to your LAN IP in production if desired.
+      - "8000:8000"
+    environment:
+      PAPERTRAIL_DB: /data/papertrail.db
+      PAPERTRAIL_SEED_FILE: /data/seed.json
+      PAPERTRAIL_MAX_BODY_BYTES: "8192"
+    volumes:
+      # Persist the sqlite file + seed across restarts.
+      - papertrail-data:/data
+      # Mount your real (gitignored) seed.json read-only to bootstrap tokens/devices.
+      - ./seed.json:/data/seed.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/healthz'); "]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  papertrail-data:

@@ -1,0 +1,45 @@
+# --- Secrets (NEVER commit real tokens or WiFi creds) ---
+# Only the *.example.* templates are tracked.
+secrets.py
+firmware/secrets.py
+**/secrets.py
+.env
+.env.*
+!.env.example
+!secrets.example.py
+
+# --- Local state / databases ---
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+caddy-data/
+caddy-config/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Logs ---
+*.log
+
+# --- Editor / OS cruft ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

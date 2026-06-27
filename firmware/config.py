@@ -1,0 +1,109 @@
+# papertrail firmware config -- the ONE place for the pin map + tunable knobs.
+#
+# Pure module: NO hardware imports here, so it is importable on a host (CPython)
+# for the logic tests. Secrets (wifi creds, device bearer token, and optionally a
+# server_url override) live in secrets.py -- see secrets.example.py. NEVER put real
+# tokens/creds in this file.
+#
+# Geometry + the contract live in ../SCHEMA.md and ../docs/layout-specs.md.
+
+# --------------------------------------------------------------------------
+# Identity / network
+# --------------------------------------------------------------------------
+DEVICE_ID = "kitchen-01"          # must match a known device on the server
+
+# Firmware version tag sent as the `fw` telemetry param on each poll. Keep it to
+# <=16 chars of [A-Za-z0-9._-] (the server's accepted charset) or it is ignored.
+FW_VERSION = "pt-1.0.0"
+
+# LAN base URL of the papertrail bridge (no trailing slash). secrets.SERVER_URL
+# overrides this if defined, so you can keep the real address out of git.
+BASE_URL = "http://192.168.1.50:8000"
+
+# Endpoint template the poller hits: GET {BASE_URL}/api/devices/{id}/current
+CURRENT_PATH = "/api/devices/{id}/current"
+
+HTTP_TIMEOUT_S = 15               # per-request socket timeout
+
+# --------------------------------------------------------------------------
+# WiFi
+# --------------------------------------------------------------------------
+WIFI_COUNTRY = "GB"               # 2-letter regulatory domain knob (e.g. GB, US, DE)
+WIFI_CONNECT_TIMEOUT_S = 20       # per-attempt association timeout
+WIFI_RETRIES = 3                  # connect attempts before giving up this wake
+
+# --------------------------------------------------------------------------
+# Polling / power
+# --------------------------------------------------------------------------
+POLL_INTERVAL_S = 120             # normal cadence default; the server can retune
+                                  # this remotely via the response control block
+                                  # (clamped locally to [30,3600] -- see poller).
+LOW_BATT_INTERVAL_S = 600         # extended cadence when battery is low (default 600)
+
+# machine.deepsleep() resets the RP2040 (RAM lost) -- the last ETag AND the server-
+# tuned poll interval are persisted to flash so both survive a deepsleep reset.
+# machine.lightsleep() keeps RAM and resumes in place (simpler, slightly higher
+# current). True => deepsleep, False => lightsleep.
+USE_DEEPSLEEP = False
+
+# Auto power mode: when True, pick the sleep mode each cycle from the INA219 -- on
+# battery (discharging) -> deepsleep (max runtime); plugged/charging -> lightsleep
+# (REPL stays alive, responsive at the desk). When False, USE_DEEPSLEEP is fixed.
+POWER_AUTO_SLEEP = True
+
+ETAG_FILE = "last_etag.txt"          # tiny flash backstop for the last seen ETag
+INTERVAL_FILE = "poll_interval.txt"  # flash backstop for the server-tuned cadence
+
+# --------------------------------------------------------------------------
+# e-Paper display -- Waveshare Pico-ePaper-2.13-B V4 (SPI1, 250x122 landscape, tri-color)
+# Pins {8,9,10,11,12,13} don't overlap the UPS I2C set {6,7}. BUT note GP8 (DC) is
+# ALSO SPI1's default MISO -- the panel is write-only, so epaper2in13._make_spi()
+# passes miso=None to stop the SPI peripheral claiming GP8, leaving it free for DC.
+# --------------------------------------------------------------------------
+# Panel MODEL select:
+#   "2.13-B" = tri-color Black/White/Red (SSD1680 V4, driver epaper2in13b). Full
+#              refresh only (~5-10s); uses the RED plane for the `alert` layout.
+#   "2.13"   = mono Black/White (driver epaper2in13, honours EPAPER_REV below).
+# Same 250x122 geometry either way, so all layouts are shared.
+EPAPER_MODEL = "2.13-B"
+
+EPAPER_REV = "V4"                 # mono-only revision knob: "V4" (common) or "V3"
+EPAPER = {
+    "spi_bus":  1,                # SPI1
+    "baudrate": 4000000,          # 4 MHz
+    "rst":      12,               # RST  -> GP12
+    "dc":       8,                # DC   -> GP8
+    "cs":       9,                # CS   -> GP9
+    "sck":      10,               # CLK/SCK  -> GP10
+    "mosi":     11,               # DIN/MOSI -> GP11
+    "busy":     13,               # BUSY -> GP13
+}
+DISPLAY_W = 250                   # logical width  (x 0..249)
+DISPLAY_H = 122                   # logical height (y 0..121); panel RAM is 128 tall
+
+# Panel RAM is 128px tall but only 122px show, hiding a few rows at the TOP.
+# Shift ALL rendered content down by this many px to pull it into view. TUNE ON
+# HARDWARE: raise if the top is still clipped, lower if the bottom starts to clip.
+# Set 0 for panels that don't need it.
+EPAPER_Y_OFFSET = 6
+
+# --------------------------------------------------------------------------
+# Battery -- Waveshare Pico-UPS-B (INA219 fuel gauge, I2C1)
+# {6,7} don't overlap the display pins {8..13}. The only sharing subtlety is on the
+# display side (GP8=DC vs SPI1's default MISO, freed via miso=None; see above).
+# --------------------------------------------------------------------------
+BATTERY = {
+    "i2c_bus":  1,                # I2C1
+    "sda":      6,                # SDA -> GP6
+    "scl":      7,                # SCL -> GP7
+    "freq":     100000,           # 100 kHz
+    "addr":     0x43,             # INA219 address on the UPS-B
+    "v_min":    3.0,              # volts at 0%  (LiPo rough-linear; calibrate per cell)
+    "v_max":    4.2,              # volts at 100%
+    "low_pct":  15,               # <= this -> low-battery screen + LOW_BATT_INTERVAL_S
+    # Power-source detection (auto deepsleep). The shunt sign tells charge vs
+    # discharge; flip charge_sign to -1 if detection reads backwards on your board
+    # (plugged shows "BATTERY"). threshold ignores near-zero noise.
+    "charge_sign":       1,
+    "power_threshold_mv": 2.0,
+}

@@ -1,0 +1,16 @@
+# Secrets — never commit real tokens / wifi creds.
+secrets.py
+seed.json
+.env
+
+# Local state
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/

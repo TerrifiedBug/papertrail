@@ -1,0 +1,9 @@
+# Real secrets -- never commit. Only secrets.example.py is tracked.
+secrets.py
+
+# Runtime state written on-device.
+last_etag.txt
+
+# Python host-test bytecode.
+__pycache__/
+*.pyc

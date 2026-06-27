@@ -1,0 +1,14 @@
+{
+  "schema": "pico-paper.v1",
+  "id": "evt_qr_0001",
+  "device": "hallway-01",
+  "channel": "guest",
+  "priority": 20,
+  "ttl_seconds": 43200,
+  "layout": "qr",
+  "content": {
+    "title": "Guest WiFi",
+    "qr_data": "WIFI:T:WPA;S:GuestNet;P:welcome123;;",
+    "caption": "Scan to join GuestNet. Valid for 12 hours."
+  }
+}
