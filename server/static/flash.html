@@ -222,6 +222,19 @@ async function provision(){
     const content=buildSecrets({ssid, pw:$("pw").value, url, deviceId:name, token:tok});
     const code="import ubinascii\nopen('secrets.py','wb').write(ubinascii.a2b_base64("+JSON.stringify(b64utf8(content))+"))\nimport os\nprint('WROTE', os.stat('secrets.py')[6], 'bytes')\n";
     log(await rawExec(code) || "(written)");
+    // Also patch config.DEVICE_ID so the chosen name works on ANY firmware version
+    // (older firmware reads config.DEVICE_ID, not secrets.DEVICE_ID). Plain string
+    // ops -- no regex -- so it runs on MicroPython's limited ure.
+    const newLine = "DEVICE_ID = " + JSON.stringify(name);
+    const code2 =
+      "l=open('config.py').read().split('\\n')\n" +
+      "for i in range(len(l)):\n" +
+      "    if l[i].startswith('DEVICE_ID'):\n" +
+      "        l[i]=" + JSON.stringify(newLine) + "\n" +
+      "        break\n" +
+      "open('config.py','w').write('\\n'.join(l))\n" +
+      "print('PATCHED config DEVICE_ID')\n";
+    log(await rawExec(code2) || "(config patched)");
     await rawExit();
     log("soft-resetting…");
     await softReset();
