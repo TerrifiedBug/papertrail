@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>paper flash</title>
+<style>
+  :root{
+    --paper:#f3f0e9; --card:#fffaf1; --ink:#111; --muted:#6a665f;
+    --danger:#c0392b; --rule:#ddd; --ok:#2e7d32;
+    font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;
+    color:var(--ink); background:var(--paper);
+  }
+  *{box-sizing:border-box}
+  body{margin:0; padding:24px; background:var(--paper);}
+  .wrap{max-width:760px; margin:0 auto;}
+  h1{font-size:54px; line-height:.92; margin:0; font-weight:800; letter-spacing:-.01em;}
+  .kicker{font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted);}
+  .sub{margin-top:10px;}
+  .card{background:var(--card); border:1.5px solid var(--ink); border-radius:24px;
+        padding:18px; box-shadow:4px 4px 0 var(--ink); margin:18px 0;}
+  .step{font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); margin-bottom:10px;}
+  label{display:block; font-size:13px; color:var(--muted); margin:12px 0 5px;}
+  input,select{font:inherit; width:100%; padding:12px; border:1.5px solid var(--ink);
+        border-radius:999px; background:#fff; color:var(--ink);}
+  .two{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  button{font:inherit; border:1.5px solid var(--ink); border-radius:999px; padding:11px 16px;
+        background:var(--ink); color:#fff; cursor:pointer;}
+  button.ghost{background:var(--paper); color:var(--ink);}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px;}
+  .pill{display:inline-flex; border:1.5px solid var(--ink); border-radius:999px;
+        padding:7px 12px; font-size:13px; background:var(--card);}
+  .pill.ok{border-color:var(--ok); color:var(--ok);}
+  .pill.bad{border-color:var(--danger); color:var(--danger);}
+  .hint{font-size:13px; color:var(--muted); line-height:1.45;}
+  .warn{border:1.5px dashed var(--danger); border-radius:18px; padding:14px; color:var(--danger); font-size:14px;}
+  pre.log{background:#111; color:#e8e4da; border-radius:18px; padding:14px; font-size:12px;
+        line-height:1.5; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word;}
+  a{color:inherit;}
+  @media(max-width:520px){ body{padding:16px} h1{font-size:38px} .card{border-radius:20px} .two{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">device provisioning · web serial</div>
+  <h1>paper<br>flash</h1>
+  <div class="sub hint">
+    Plug a Pico (already running MicroPython + the papertrail firmware) into this
+    computer's USB, then write its <code>secrets.py</code> — WiFi, device token, and
+    server URL — straight from the browser. No MicroPico, no hand-editing.
+    <a href="/admin">← back to dashboard</a>
+  </div>
+
+  <div id="unsupported" class="card" style="display:none">
+    <div class="warn" id="unsupportedMsg"></div>
+  </div>
+
+  <div id="app" style="display:none">
+
+    <!-- 1. connect -->
+    <div class="card">
+      <div class="step">1 · connect</div>
+      <div class="hint">Click connect and pick the Pico's serial port (USB).</div>
+      <div class="row">
+        <button id="connectBtn" type="button">Connect Pico</button>
+        <span id="connState" class="pill bad">disconnected</span>
+      </div>
+    </div>
+
+    <!-- 2. config -->
+    <div class="card">
+      <div class="step">2 · configuration</div>
+      <div class="two">
+        <div><label>WiFi SSID</label><input id="ssid" autocomplete="off" placeholder="your-wifi"></div>
+        <div><label>WiFi password</label><input id="pw" type="password" autocomplete="off" placeholder="••••••••"></div>
+      </div>
+      <label>Server URL (the Pico polls this over the LAN — use the bridge's LAN IP, not localhost)</label>
+      <input id="url" placeholder="http://192.168.1.50:8000">
+      <div class="two">
+        <div><label>Device id</label><input id="deviceId" placeholder="kitchen-01"></div>
+        <div><label>Device token</label><input id="token" autocomplete="off" placeholder="pt_dev_…"></div>
+      </div>
+      <div class="row" id="mintRow" style="display:none">
+        <span class="hint">Signed into the dashboard — pick a device and mint a fresh device token:</span>
+        <select id="deviceSel" style="max-width:200px"></select>
+        <button id="mintBtn" class="ghost" type="button">Mint token</button>
+      </div>
+    </div>
+
+    <!-- 3. write -->
+    <div class="card">
+      <div class="step">3 · write &amp; reboot</div>
+      <div class="hint">Writes <code>secrets.py</code> over the serial REPL (the device's
+        files are never sent anywhere — it's a direct USB write), then soft-resets the Pico.</div>
+      <div class="row">
+        <button id="flashBtn" type="button" disabled>Write secrets.py + reboot</button>
+        <span id="result" class="pill" style="display:none"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="step">serial log</div>
+      <pre class="log" id="log">—</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+// --- environment gate ----------------------------------------------------------
+(function gate(){
+  const reasons = [];
+  if (!("serial" in navigator)) reasons.push("This browser has no Web Serial API. Use Chrome, Edge, or Opera (desktop).");
+  if (!window.isSecureContext) reasons.push("Web Serial needs a secure context: open this over <b>https://</b> or <b>http://localhost</b> (not a bare LAN IP).");
+  if (reasons.length){
+    $("unsupported").style.display = "";
+    $("unsupportedMsg").innerHTML = reasons.join("<br><br>");
+  } else {
+    $("app").style.display = "";
+  }
+})();
+
+// prefill server url with this origin (user should switch localhost -> LAN IP)
+$("url").value = location.origin;
+
+// --- serial + raw REPL ---------------------------------------------------------
+let port = null, writer = null, reader = null, rxbuf = "", readLoopRunning = false;
+
+function log(msg){ const el = $("log"); el.textContent = (el.textContent === "—" ? "" : el.textContent) + msg + "\n"; el.scrollTop = el.scrollHeight; }
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+function setConn(ok){ const p = $("connState"); p.textContent = ok ? "connected" : "disconnected"; p.className = "pill " + (ok ? "ok" : "bad"); $("flashBtn").disabled = !ok; }
+
+async function readLoop(){
+  readLoopRunning = true;
+  try {
+    while (port && port.readable && readLoopRunning){
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) rxbuf += dec.decode(value);
+    }
+  } catch(e){ /* closed */ }
+}
+function clearRx(){ rxbuf = ""; }
+async function waitFor(marker, timeoutMs=5000){
+  const start = Date.now();
+  while (!rxbuf.includes(marker)){
+    if (Date.now() - start > timeoutMs) throw new Error("timeout waiting for " + JSON.stringify(marker) + "  (last: " + JSON.stringify(rxbuf.slice(-90)) + ")");
+    await sleep(20);
+  }
+}
+async function send(s){ await writer.write(enc.encode(s)); }
+
+async function connect(){
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  writer = port.writable.getWriter();
+  reader = port.readable.getReader();
+  readLoop();
+  setConn(true);
+  log("connected @115200");
+  // interrupt any running program so we get a clean REPL
+  clearRx();
+  await send("\r\x03\x03");           // Ctrl-C x2
+  await sleep(200);
+  log("interrupted running program (Ctrl-C)");
+}
+
+// enter raw REPL (Ctrl-A), returns when the banner+prompt arrives
+async function rawEnter(){
+  clearRx();
+  await send("\r\x01");               // Ctrl-A
+  await waitFor("raw REPL; CTRL-B to exit");
+  await waitFor(">");
+}
+// exec code in raw REPL; throws on a device-side traceback
+async function rawExec(code){
+  clearRx();
+  await send(code);
+  await send("\x04");                 // Ctrl-D -> execute
+  await waitFor("\x04>");             // OK<stdout>\x04<stderr>\x04>
+  const parts = rxbuf.split("\x04");
+  const stdout = (parts[0] || "").replace(/^.*?OK/s, "");
+  const stderr = (parts[1] || "").trim();
+  if (stderr) throw new Error(stderr);
+  return stdout.trim();
+}
+async function rawExit(){ await send("\r\x02"); }      // Ctrl-B -> friendly REPL
+async function softReset(){ await send("\r\x04"); }    // Ctrl-D in friendly REPL -> soft reboot
+
+// --- secrets.py builder (values JSON-stringified -> valid Python string literals) ---
+function buildSecrets(c){
+  return [
+    "# Written by paper flash (web serial provisioning). Real creds -- keep off git.",
+    "WIFI_SSID = " + JSON.stringify(c.ssid),
+    "WIFI_PASSWORD = " + JSON.stringify(c.pw),
+    "DEVICE_TOKEN = " + JSON.stringify(c.token),
+    "SERVER_URL = " + JSON.stringify(c.url),
+    "DEVICE_ID = " + JSON.stringify(c.deviceId),
+    ""
+  ].join("\n");
+}
+function b64utf8(s){ return btoa(unescape(encodeURIComponent(s))); }
+
+async function flash(){
+  const cfg = {
+    ssid: $("ssid").value, pw: $("pw").value, url: $("url").value.trim().replace(/\/+$/,""),
+    deviceId: $("deviceId").value.trim(), token: $("token").value.trim(),
+  };
+  if (!cfg.ssid || !cfg.token || !cfg.url){ result("fill SSID, server URL, and token", false); return; }
+  if (/localhost|127\.0\.0\.1/.test(cfg.url) && !confirm("Server URL points at localhost — the Pico can't reach that. Use the bridge's LAN IP. Continue anyway?")) return;
+
+  $("flashBtn").disabled = true;
+  try {
+    log("entering raw REPL…");
+    await rawEnter();
+    const content = buildSecrets(cfg);
+    const code =
+      "import ubinascii\n" +
+      "open('secrets.py','wb').write(ubinascii.a2b_base64(" + JSON.stringify(b64utf8(content)) + "))\n" +
+      "import os\n" +
+      "print('WROTE', os.stat('secrets.py')[6], 'bytes')\n";
+    const out = await rawExec(code);
+    log(out || "(written)");
+    await rawExit();
+    log("soft-resetting…");
+    await softReset();
+    log("done. secrets.py written; the Pico is rebooting and will connect + poll.");
+    result("written + rebooting", true);
+  } catch(e){
+    log("ERROR: " + (e && e.message ? e.message : e));
+    result("failed — see log", false);
+  } finally {
+    $("flashBtn").disabled = false;
+  }
+}
+function result(text, ok){ const p = $("result"); p.style.display = ""; p.textContent = text; p.className = "pill " + (ok ? "ok" : "bad"); }
+
+// --- optional: mint a token from the dashboard (same-origin admin API) ----------
+const ADMIN = localStorage.getItem("papertrail_admin_token");
+async function adminApi(path, opts){
+  opts = opts || {};
+  const r = await fetch("/api/admin" + path, {
+    method: opts.method || "GET",
+    headers: { "Authorization": "Bearer " + ADMIN, "Content-Type": "application/json" },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!r.ok) throw new Error("admin API " + r.status);
+  return r.status === 204 ? null : r.json();
+}
+async function initMint(){
+  if (!ADMIN) return;                 // not signed into the dashboard -> manual entry only
+  try {
+    const data = await adminApi("/devices");
+    const sel = $("deviceSel");
+    (data.devices || []).forEach(d => { const o = document.createElement("option"); o.value = d.id; o.textContent = d.id; sel.appendChild(o); });
+    if (sel.options.length){ $("mintRow").style.display = ""; sel.addEventListener("change", () => { $("deviceId").value = sel.value; }); $("deviceId").value = sel.value; }
+  } catch(e){ /* admin disabled or token stale -> manual entry */ }
+}
+$("mintBtn") && $("mintBtn").addEventListener("click", async function(){
+  const id = $("deviceSel").value;
+  this.disabled = true;
+  try {
+    const res = await adminApi("/tokens", { method: "POST", body: { kind: "device", device_id: id } });
+    $("token").value = res.token;     // shown once
+    $("deviceId").value = id;
+    log("minted a device token for " + id + " (also stored hashed in the bridge)");
+  } catch(e){ log("mint failed: " + e.message); }
+  this.disabled = false;
+});
+
+$("connectBtn").addEventListener("click", async function(){
+  this.disabled = true;
+  try { await connect(); } catch(e){ log("connect failed: " + (e && e.message ? e.message : e)); }
+  this.disabled = false;
+});
+$("flashBtn").addEventListener("click", flash);
+initMint();
+</script>
+</body>
+</html>

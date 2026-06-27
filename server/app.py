@@ -532,6 +532,20 @@ def create_app(
             )
         return FileResponse(path, media_type="text/html")
 
+    @app.get("/flash", include_in_schema=False)
+    async def flash_page():
+        """Serve the Web-Serial device provisioner (no auth; it writes secrets.py to
+        a Pico over USB serial entirely client-side). EXPERIMENTAL — needs a secure
+        context (HTTPS or http://localhost) and a Chromium browser. See roadmap."""
+        path = os.path.join(_STATIC_DIR, "flash.html")
+        if not os.path.exists(path):
+            return HTMLResponse(
+                "<!doctype html><meta charset=utf-8><title>paper flash</title>"
+                "<p>flash.html not deployed yet.</p>",
+                status_code=200,
+            )
+        return FileResponse(path, media_type="text/html")
+
     # --- admin API: devices -----------------------------------------------------
 
     @app.get("/api/admin/devices", tags=["admin"])

@@ -50,6 +50,11 @@ def _server_url(secrets):
     return url if url else config.BASE_URL
 
 
+def _device_id(secrets):
+    # secrets.DEVICE_ID (written by the web flasher) overrides config.DEVICE_ID.
+    return getattr(secrets, "DEVICE_ID", None) or config.DEVICE_ID
+
+
 # --- tiny flash-backed ETag store (survives deepsleep reset) ----------------
 def load_etag():
     try:
@@ -184,7 +189,7 @@ def cycle(panel, last_etag, interval_pref):
                 "fw": config.FW_VERSION,
                 "up": _uptime_s(),
             }
-            result = poller.poll(_server_url(secrets), config.DEVICE_ID,
+            result = poller.poll(_server_url(secrets), _device_id(secrets),
                                  secrets.DEVICE_TOKEN, poll_etag, telemetry)
     finally:
         wifi.disconnect()                       # radio off before any draw / sleep

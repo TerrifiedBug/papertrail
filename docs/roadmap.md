@@ -7,7 +7,10 @@ In progress: the admin dashboard ([`dashboard.md`](dashboard.md)). This tracks w
 
 Configure + flash a Pico from the browser — no MicroPico, no hand-edited `secrets.py`.
 
-- **Layer A — config + file push (planned next).** The browser [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
+- **Layer A — config push (PROTOTYPE shipped).** A `/flash` page writes `secrets.py`
+  (WiFi, device token, server URL, device id) over USB — see [`flashing.md`](flashing.md).
+  Still to do: upload the firmware `.py` set over the same channel; host it at an HTTPS
+  origin so it works off `localhost`. The browser [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
   opens the Pico's USB serial port → drops MicroPython into **raw REPL** → writes files
   (~100 lines of JS, same as mpremote/MicroPico). The dashboard already holds the device
   token + `SERVER_URL`, so one **Provision** click writes `secrets.py` (wifi creds you type
