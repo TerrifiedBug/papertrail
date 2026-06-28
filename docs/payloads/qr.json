@@ -3,8 +3,7 @@
   "id": "evt_qr_0001",
   "device": "hallway-01",
   "channel": "guest",
-  "priority": 20,
-  "ttl_seconds": 43200,
+  "kind": "base",
   "layout": "qr",
   "content": {
     "title": "Guest WiFi",

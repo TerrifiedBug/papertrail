@@ -45,26 +45,23 @@ Configure + flash a Pico from the browser — no MicroPico, no hand-edited `secr
 > The full contract (manifest + files, `control.fw`, delta/atomic/backup/recovery, the
 > rollback guarantee) is documented in [`ota.md`](ota.md).
 
-## Sticky-by-default events (DECIDED — build next)
+## Event resolution — base / interrupt (shipped)
 
-Change the expiry model so a display keeps the **last webhook until it's replaced**, rather
-than reverting to the idle fallback after a fixed TTL:
+Events carry a `kind` that decides persistence; `priority` was removed (this supersedes it):
 
-- **`ttl_seconds` becomes optional. Omitted → no expiry (sticky)** — permanent until a
-  newer/higher-priority event supersedes it or it's deleted. Provided → auto-clears after N
-  seconds (≤ `604800` = 7 days) as today. Backward-compatible (omitting was a `422` before;
-  schema stays `pico-paper.v1`). Net: no-TTL = wifi-QR/ambient; TTL = alerts/transient;
-  fallback = true empty state only.
-- **Add `received_at` to the `GET /current` response** (epoch of first ingest — "when it
-  showed up"). Additive, NOT in the ETag (won't churn the 304). Dashboard renders relative
-  age; a footer/renderer can show absolute "Updated 14:32".
-- **Footgun to surface in the UI:** resolution is priority-first, so a no-TTL *high-priority*
-  event sticks until superseded `≥` its priority or deleted. The dashboard warns on
-  "high-priority + no TTL" and offers event-delete to clear a stuck screen.
+- **`base`** — a persistent screen. Ignores `ttl_seconds`; stays until a newer base on a
+  subscribed channel replaces it, or it's deleted. (wifi-QR, ambient status.)
+- **`interrupt`** — a temporary overlay with a TTL. `ttl_seconds` omitted/`0` → a default
+  `300s`; positive values cap at 7 days. **Always expires — never permanent.** (alerts,
+  transient notices.)
 
-Implementation is small: `ttl_seconds` optional in `schema.py`; `resolve.py` skips the
-expiry check when ttl is null; add `received_at` to the response; one test. Lands in the
-same commit as the admin GUI.
+`GET /current` resolves in layers: **newest live interrupt → newest base → device fallback**
+(idle). TTL is evaluated lazily at read time (no sweeper). `received_at` (epoch of first
+ingest) is in the response but **not** in the ETag, so it never churns the `304`; the
+dashboard renders relative age from it.
+
+Footgun the UI surfaces: a `base` with no replacement sticks until deleted — the dashboard
+offers event-delete to clear a stuck screen.
 
 ## Deferred (designed, not yet built)
 

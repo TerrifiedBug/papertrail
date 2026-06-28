@@ -17,14 +17,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 SCHEMA_VERSION = "pico-paper.v1"
 TTL_CAP = 604_800          # 7 days, seconds
-PRIORITY_MIN = 0
-PRIORITY_MAX = 255
+INTERRUPT_DEFAULT_TTL = 300
 QR_DATA_MAX = 512
 ID_PATTERN = r"^[A-Za-z0-9._:-]+$"
 
 # Frozen layout allowlist. Anything else -> 422.
 LAYOUTS = ("status_card", "alert", "list", "metric", "qr")
 Layout = Literal["status_card", "alert", "list", "metric", "qr"]
+EventKind = Literal["base", "interrupt"]
 
 
 # --- per-layout content models --------------------------------------------------
@@ -158,18 +158,13 @@ class Envelope(BaseModel):
     id: str = Field(min_length=1, max_length=128, pattern=ID_PATTERN)
     device: str = Field(min_length=1)
     channel: str = Field(min_length=1, max_length=64)
-    priority: int = 0
-    # Optional: omitted or 0 => NO expiry (sticky until replaced/deleted). A
-    # positive value expires after N seconds (capped at TTL_CAP = 7 days).
+    kind: EventKind = "base"
+    # For interrupts, omitted or 0 means use INTERRUPT_DEFAULT_TTL. Base screens
+    # ignore ttl_seconds entirely and persist until replaced. Positive values cap
+    # at TTL_CAP = 7 days.
     ttl_seconds: Optional[int] = Field(default=None, ge=0)
     layout: Layout
     content: dict[str, Any]
-
-    @field_validator("priority")
-    @classmethod
-    def _clamp_priority(cls, v: int) -> int:
-        # priority is clamped (not rejected) to 0..255; higher wins.
-        return max(PRIORITY_MIN, min(PRIORITY_MAX, v))
 
     @field_validator("ttl_seconds")
     @classmethod

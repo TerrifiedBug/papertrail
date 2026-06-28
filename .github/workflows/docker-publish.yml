@@ -11,6 +11,11 @@ on:
       - 'server/**'
       - 'firmware/**'                 # bundled into the image + served via OTA -> must rebuild
       - '.github/workflows/docker-publish.yml'
+  pull_request:                       # PRs run the test job only (build-and-push is gated off)
+    paths:
+      - 'server/**'
+      - 'firmware/**'
+      - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
 
 env:
@@ -35,6 +40,7 @@ jobs:
 
   build-and-push:
     needs: test
+    if: github.event_name != 'pull_request'   # never push an image from a PR
     runs-on: ubuntu-latest
     permissions:
       contents: read

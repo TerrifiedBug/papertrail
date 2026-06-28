@@ -20,10 +20,11 @@ last image at **zero power**, so the tag can run for weeks on a small LiPo.
 ## What it is
 
 A one-way notification surface. Sources POST **events**; each event names a
-`device`, a `channel`, a `priority`, a `ttl_seconds`, and a `layout` + `content`.
+`device`, a `channel`, a `kind`, and a `layout` + `content`. `kind=base` is the
+normal persistent screen; `kind=interrupt` is a temporary overlay with a TTL.
 The bridge stores events, then resolves a single **current screen** per device:
-the highest-priority, non-expired event on a channel the device subscribes to
-(newest wins ties). If nothing is live, the device shows its configured **fallback**
+the newest live interrupt wins, otherwise the newest base screen on a subscribed
+channel wins. If nothing exists, the device shows its configured **fallback**
 (idle) screen.
 
 The Pico is deliberately dumb: it polls `GET /api/devices/:id/current`, sends the
@@ -56,7 +57,7 @@ ever cross the wire.
                            |  proxy -> bridge:8000
                            v
                  +-------------------+   validate -> dedup -> store (first write wins)
-                 |  FastAPI bridge   |   resolve current(device): priority, then newest
+                 |  FastAPI bridge   |   resolve current(device): interrupt, then base
                  |  (Docker)         |   ETag = sha256(canonical_json{content,device,layout,control})
                  |  SQLite volume    |   TTL evaluated lazily at read time
                  +---------+---------+
@@ -233,7 +234,7 @@ curl -sS -X POST https://paper.example.com/api/devices/kitchen-01/events \
 ```bash
 curl -sS https://paper.example.com/api/devices/kitchen-01/current \
   -H "Authorization: Bearer $DEVICE_TOKEN"
-# -> 200 + ETag header + {schema,device,layout,content,control,source_event_id,priority,etag,rendered_at}
+# -> 200 + ETag header + {schema,device,layout,content,control,source_event_id,kind,etag,rendered_at}
 ```
 
 ### 5. Point the Pico at it

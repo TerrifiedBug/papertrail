@@ -14,7 +14,6 @@ def _env(**over):
         "id": "evt_1",
         "device": "kitchen-01",
         "channel": "home.status",
-        "priority": 50,
         "ttl_seconds": 900,
         "layout": "status_card",
         "content": {"title": "T", "status": "OK"},
@@ -31,15 +30,15 @@ def test_valid_envelope():
     assert env.content["lines"] == []
 
 
-def test_priority_clamped_both_ends():
-    assert validate_envelope(_env(priority=300)).priority == 255
-    assert validate_envelope(_env(priority=-5)).priority == 0
-
-
-def test_priority_default_zero():
+def test_kind_defaults_base():
     raw = _env()
-    del raw["priority"]
-    assert validate_envelope(raw).priority == 0
+    raw.pop("kind", None)
+    assert validate_envelope(raw).kind == "base"
+
+
+def test_unknown_kind_rejected():
+    with pytest.raises(ValidationError):
+        validate_envelope(_env(kind="banner"))
 
 
 def test_ttl_cap_sticky_and_reject_negative():

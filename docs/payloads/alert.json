@@ -3,7 +3,7 @@
   "id": "evt_alert_0001",
   "device": "kitchen-01",
   "channel": "home.alerts",
-  "priority": 200,
+  "kind": "interrupt",
   "ttl_seconds": 600,
   "layout": "alert",
   "content": {

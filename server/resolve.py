@@ -1,10 +1,8 @@
 """Screen resolution + ETag.
 
-``current(device)``: among the device's events on a subscribed channel that are
-not expired, pick the highest priority (tie-break newest ``received_at``). If
-none, fall back to the device's configurable idle screen.
-
-TTL is evaluated lazily here at read time — there is no background sweeper.
+``current(device)`` resolves in layers: newest live interrupt, else newest base,
+else the device fallback. TTL is evaluated lazily here at read time — there is
+no background sweeper.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .schema import SCHEMA_VERSION, validate_fallback
+from .schema import INTERRUPT_DEFAULT_TTL, SCHEMA_VERSION, validate_fallback
 from .store import DeviceRow, EventRow, Store
 
 # Last-resort idle screen if a device's configured fallback is somehow invalid at
@@ -52,7 +50,7 @@ def compute_etag(
     """sha256 hex of the render-relevant payload ONLY.
 
     Only these keys are hashed so the ETag is stable across requests while the
-    screen is unchanged; ``rendered_at`` / ``source_event_id`` / ``priority`` are
+    screen is unchanged; ``rendered_at`` / ``source_event_id`` / ``kind`` are
     deliberately excluded (they would churn the ETag every request).
 
     ``control`` is included so a rare remote control change (e.g. poll_interval)
@@ -75,10 +73,10 @@ class Resolution:
     layout: str
     content: dict[str, Any]
     source_event_id: Optional[str]   # None when fallback
-    priority: Optional[int]          # None when fallback
     etag: str
     control: Optional[dict[str, Any]] = None   # {"poll_interval": N}
     received_at: Optional[int] = None          # epoch the winning event was ingested
+    kind: Optional[str] = None        # None when fallback
 
     def to_response(self, rendered_at: Optional[int] = None) -> dict[str, Any]:
         """The GET /current JSON body. ``rendered_at`` is informational and NOT
@@ -91,7 +89,7 @@ class Resolution:
             "content": self.content,
             "control": self.control,
             "source_event_id": self.source_event_id,
-            "priority": self.priority,
+            "kind": self.kind,
             "received_at": self.received_at,
             "etag": self.etag,
             "rendered_at": int(time.time()) if rendered_at is None else rendered_at,
@@ -119,12 +117,21 @@ def resolve_from_events(
         etag_control if fw_version is None else {**etag_control, "fw": fw_version}
     )
     subscribed = set(device.channels)
-    candidates = [
-        e
-        for e in events
-        if e.channel in subscribed
-        and (e.ttl_seconds is None or e.ttl_seconds <= 0 or now < e.received_at + e.ttl_seconds)
-    ]
+
+    def live_interrupt(e: EventRow) -> bool:
+        # An interrupt is ALWAYS temporary: a missing/<=0 ttl falls back to the
+        # default lifetime, never "permanent" (permanence is base's job). Ingest
+        # already coerces an interrupt's omitted/0 ttl -> INTERRUPT_DEFAULT_TTL;
+        # this mirrors it so a directly-built row can't be permanent either.
+        if e.channel not in subscribed or e.kind != "interrupt":
+            return False
+        ttl = e.ttl_seconds if (e.ttl_seconds and e.ttl_seconds > 0) else INTERRUPT_DEFAULT_TTL
+        return now < e.received_at + ttl
+
+    interrupts = [e for e in events if live_interrupt(e)]
+    bases = [e for e in events if e.channel in subscribed and e.kind == "base"]
+
+    candidates = interrupts or bases
 
     if not candidates:
         # Defense in depth: a bad fallback (should be caught at seed) must never
@@ -143,19 +150,20 @@ def resolve_from_events(
             layout=layout,
             content=content,
             source_event_id=None,
-            priority=None,
             control=control,
             etag=compute_etag(device.id, layout, content, etag_control),
         )
 
-    # Highest priority wins; tie-break NEWEST received_at.
-    chosen = max(candidates, key=lambda e: (e.priority, e.received_at))
+    # Newest interrupt wins; when no interrupt is live, newest base wins. If two
+    # events share the same timestamp (common in tests and bursty writes), prefer
+    # the later row from storage so "last write wins" remains true.
+    chosen = max(enumerate(candidates), key=lambda item: (item[1].received_at, item[0]))[1]
     return Resolution(
         device=device.id,
         layout=chosen.layout,
         content=chosen.content,
         source_event_id=chosen.id,
-        priority=chosen.priority,
+        kind=chosen.kind,
         control=control,
         received_at=chosen.received_at,
         etag=compute_etag(device.id, chosen.layout, chosen.content, etag_control),

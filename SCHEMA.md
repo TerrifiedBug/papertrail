@@ -32,8 +32,8 @@ A source POSTs an **event**. Every event is a flat envelope plus a per-layout
   "id":          "evt_2026...",     // string, globally unique; used for dedup
   "device":      "kitchen-01",      // string, target device id
   "channel":     "home.status",     // string, logical channel the device subscribes to
-  "priority":    50,                 // int, higher wins. range 0..255 (clamp). default 0
-  "ttl_seconds": 900,                // int >=1, lifetime from received_at. cap 604800 (7d)
+  "kind":        "base",            // "base" persistent screen, or "interrupt" temporary overlay
+  "ttl_seconds": 900,                // interrupt TTL seconds; base ignores it; cap 604800 (7d)
   "layout":      "status_card",     // enum: status_card|alert|list|metric|qr
   "content":     { /* per-layout, see §3 */ }
 }
@@ -47,8 +47,8 @@ A source POSTs an **event**. Every event is a flat envelope plus a per-layout
 | `id`          | string | yes | 1..128 chars `[A-Za-z0-9._:-]`; duplicate id is a no-op (dedup) |
 | `device`      | string | yes | MUST be a known device; else 404 |
 | `channel`     | string | yes | 1..64 chars; ingest token may be channel-scoped (else 403) |
-| `priority`    | int    | no  | default `0`; clamped to `0..255` |
-| `ttl_seconds` | int    | yes | `>=1`, clamped to `<=604800` |
+| `kind`        | string | no  | `"base"` (default) = persistent screen that **ignores** `ttl_seconds`; `"interrupt"` = temporary overlay that **uses** `ttl_seconds`; any other value 422 |
+| `ttl_seconds` | int    | no  | `>=0`, clamped to `<=604800` (7d); ignored for base; interrupt omitted/`0` => 300s default |
 | `layout`      | string | yes | MUST be in the allowlist (§3); else 422 |
 | `content`     | object | yes | MUST validate against the layout shape; else 422 |
 
@@ -61,7 +61,7 @@ The server **ignores** these if a client sends them and stamps its own:
 | `received_at` | int  | epoch **seconds**, server UTC clock, set at successful ingest |
 | `raw_size`    | int  | byte length of the raw request body as received |
 
-Stored row = envelope (`schema,id,device,channel,priority,ttl_seconds,layout,content`)
+Stored row = envelope (`schema,id,device,channel,kind,ttl_seconds,layout,content`)
 + `received_at` + `raw_size`.
 
 ---
@@ -103,7 +103,7 @@ content: {
   "id": "evt_status_0001",
   "device": "kitchen-01",
   "channel": "home.status",
-  "priority": 50,
+  "kind": "base",
   "ttl_seconds": 900,
   "layout": "status_card",
   "content": {
@@ -145,7 +145,7 @@ content: {
   "id": "evt_alert_0001",
   "device": "kitchen-01",
   "channel": "home.alerts",
-  "priority": 200,
+  "kind": "interrupt",
   "ttl_seconds": 600,
   "layout": "alert",
   "content": {
@@ -176,7 +176,7 @@ content: {
   "id": "evt_list_0001",
   "device": "kitchen-01",
   "channel": "home.tasks",
-  "priority": 30,
+  "kind": "base",
   "ttl_seconds": 86400,
   "layout": "list",
   "content": {
@@ -213,7 +213,7 @@ content: {
   "id": "evt_metric_0001",
   "device": "office-01",
   "channel": "energy",
-  "priority": 40,
+  "kind": "base",
   "ttl_seconds": 300,
   "layout": "metric",
   "content": {
@@ -245,7 +245,7 @@ content: {
   "id": "evt_qr_0001",
   "device": "hallway-01",
   "channel": "guest",
-  "priority": 20,
+  "kind": "base",
   "ttl_seconds": 43200,
   "layout": "qr",
   "content": {
@@ -272,17 +272,23 @@ TTL is evaluated **lazily at read time** (no background sweeper required). With
 `now = server epoch seconds`:
 
 ```
-candidates = [ e for e in events
-               if e.device  == device
-               and e.channel in device.channels
-               and now < (e.received_at + e.ttl_seconds) ]   # not expired
+live_interrupts = [ e for e in events
+                    if e.device == device
+                    and e.channel in device.channels
+                    and e.kind == "interrupt"
+                    and now < (e.received_at + e.ttl_seconds) ]
 
-if candidates is empty:
-    screen = device.fallback            # ambient/idle screen, per-device configurable
+base_screens = [ e for e in events
+                 if e.device == device
+                 and e.channel in device.channels
+                 and e.kind == "base" ]
+
+if live_interrupts:
+    chosen = newest(live_interrupts)     # temporary overlay
+elif base_screens:
+    chosen = newest(base_screens)        # persistent until replaced/deleted
 else:
-    # highest priority wins; tie-break newest received_at
-    chosen = max(candidates, key=lambda e: (e.priority, e.received_at))
-    screen = { "device": device.id, "layout": chosen.layout, "content": chosen.content }
+    screen = device.fallback             # ambient/idle screen, per-device configurable
 ```
 
 The fallback is a complete `{layout, content}` using any of the 5 layouts
@@ -300,7 +306,7 @@ ETag: "<sha256-hex>"
   "content":         { ... },                 // the chosen/fallback content
   "control":         { "poll_interval": 120 }, // server->Pico control plane; see "Remote poll interval" below
   "source_event_id": "evt_status_0001",       // null when fallback
-  "priority":        50,                        // null when fallback
+  "kind":            "base",                    // null when fallback
   "etag":            "<sha256-hex>",
   "rendered_at":     1750000000                // epoch s; informational, NOT hashed
 }
@@ -321,7 +327,7 @@ hash_input = { "content": <content>, "device": <id>, "layout": <layout>, "contro
 etag       = sha256( canonical_json(hash_input) ).hexdigest()
 ```
 
-`rendered_at`, `source_event_id`, and `priority` are **excluded** from the hash
+`rendered_at`, `source_event_id`, and `kind` are **excluded** from the hash
 (they would otherwise churn the ETag every request). `control` **is** hashed: a
 `poll_interval` change busts the `304` so the Pico picks up the new interval on
 its next poll.
@@ -487,7 +493,7 @@ CREATE TABLE events (
   id          TEXT PRIMARY KEY,         -- event id (dedup key)
   device      TEXT NOT NULL,
   channel     TEXT NOT NULL,
-  priority    INTEGER NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'base',
   ttl_seconds INTEGER NOT NULL,
   layout      TEXT NOT NULL,
   content     TEXT NOT NULL,            -- JSON string
