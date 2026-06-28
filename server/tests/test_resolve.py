@@ -19,7 +19,7 @@ DEVICE = DeviceRow(
 )
 
 
-def _evt(id, *, priority, received_at, ttl=900, channel="home.status", content=None):
+def _evt(id, *, priority, received_at, ttl=900, channel="home.status", kind="base", content=None):
     return EventRow(
         id=id,
         device="kitchen-01",
@@ -30,19 +30,36 @@ def _evt(id, *, priority, received_at, ttl=900, channel="home.status", content=N
         content=content or {"title": id},
         received_at=received_at,
         raw_size=10,
+        kind=kind,
     )
 
 
-def test_priority_wins():
+def test_newest_base_wins_over_priority():
     now = 1000
     events = [
-        _evt("low", priority=10, received_at=900),
-        _evt("high", priority=200, received_at=900),
+        _evt("high-old", priority=200, received_at=900),
+        _evt("low-new", priority=10, received_at=950),
     ]
     res = resolve_from_events(DEVICE, events, now)
-    assert res.source_event_id == "high"
-    assert res.priority == 200
+    assert res.source_event_id == "low-new"
+    assert res.kind == "base"
+    assert res.priority == 10
 
+
+
+def test_live_interrupt_overlays_newer_base_then_expires():
+    now = 1000
+    events = [
+        _evt("base", priority=1, received_at=990, kind="base"),
+        _evt("interrupt", priority=1, received_at=900, ttl=200, kind="interrupt"),
+    ]
+    live = resolve_from_events(DEVICE, events, now)
+    assert live.source_event_id == "interrupt"
+    assert live.kind == "interrupt"
+
+    expired = resolve_from_events(DEVICE, events, now=1201)
+    assert expired.source_event_id == "base"
+    assert expired.kind == "base"
 
 def test_tie_break_newest_received_at():
     now = 1000
@@ -57,7 +74,7 @@ def test_tie_break_newest_received_at():
 def test_ttl_expiry_falls_back():
     now = 2000
     # received_at 900 + ttl 900 = 1800 < now 2000 -> expired
-    events = [_evt("stale", priority=99, received_at=900, ttl=900)]
+    events = [_evt("stale", priority=99, received_at=900, ttl=900, kind="interrupt")]
     res = resolve_from_events(DEVICE, events, now)
     assert res.source_event_id is None
     assert res.priority is None

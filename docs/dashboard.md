@@ -48,7 +48,7 @@ every ~10s.
 
 **Manage.** Per device you can **send a test event** (layout composer with a live
 preview), **set the poll interval** (`PATCH /config`, clamped 30–3600s), and open an
-**events drawer** — recent events with channel/priority/expiry, each deletable to clear
+**events drawer** — recent events with channel/kind/expiry, each deletable to clear
 a stuck screen.
 
 **Devices & tokens.** **Create** a device (id, channels, fallback screen, intervals),
@@ -84,7 +84,7 @@ Full shapes are in the regenerated [`openapi.json`](openapi.json) / the live `/d
 
 ## Permanent screens (a note)
 
-`ttl_seconds` is optional on every event — **omit it (or send `0`) and the event never
+`kind=base` events are sticky screens; `kind=interrupt` events are temporary overlays. `ttl_seconds` is optional for interrupts — **omit it (or send `0`) and the server uses the default 300s TTL**. Base events never
 expires** (sticky until replaced or deleted); a positive value expires after N seconds
 (≤ 7 days). So a wifi-QR or ambient status pushed with no TTL simply stays. To make a
 screen the device's *idle default* (shown whenever nothing else is active), set it as

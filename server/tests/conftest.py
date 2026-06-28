@@ -69,6 +69,7 @@ def make_event(
     channel: str = "home.status",
     priority: int = 50,
     ttl_seconds: int = 900,
+    kind: str = "base",
     content: dict[str, Any] | None = None,
     device: str = DEVICE_ID,
 ) -> dict[str, Any]:
@@ -79,6 +80,7 @@ def make_event(
         "id": id,
         "device": device,
         "channel": channel,
+        "kind": kind,
         "priority": priority,
         "ttl_seconds": ttl_seconds,
         "layout": layout,

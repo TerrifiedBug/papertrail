@@ -29,20 +29,21 @@ def test_post_then_current(ctx):
     assert g.headers["etag"].strip('"') == body["etag"]
 
 
-def test_priority_wins_over_http(ctx):
+def test_newest_base_wins_over_http(ctx):
     ctx.client.post(
         "/api/devices/kitchen-01/events",
         headers=bearer(INGEST_TOKEN),
-        json=make_event(id="evt_low", priority=10, content={"title": "low"}),
+        json=make_event(id="evt_old_high", priority=200, content={"title": "old high"}),
     )
     ctx.client.post(
         "/api/devices/kitchen-01/events",
         headers=bearer(INGEST_TOKEN),
-        json=make_event(id="evt_high", priority=200, content={"title": "high"}),
+        json=make_event(id="evt_new_low", priority=10, content={"title": "new low"}),
     )
     g = ctx.client.get("/api/devices/kitchen-01/current", headers=bearer(DEVICE_TOKEN))
-    assert g.json()["content"]["title"] == "high"
-    assert g.json()["priority"] == 200
+    assert g.json()["content"]["title"] == "new low"
+    assert g.json()["kind"] == "base"
+    assert g.json()["priority"] == 10
 
 
 def test_dedup_first_write_wins(ctx):
@@ -91,6 +92,7 @@ def test_ttl_expiry_falls_back_over_http(ctx):
             content={"title": "old"},
             received_at=past,
             raw_size=10,
+            kind="interrupt",
         )
     )
     g = ctx.client.get("/api/devices/kitchen-01/current", headers=bearer(DEVICE_TOKEN))

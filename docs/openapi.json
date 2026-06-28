@@ -91,8 +91,7 @@
                     "id": "evt_example_0001",
                     "device": "kitchen-01",
                     "channel": "home.status",
-                    "priority": 50,
-                    "ttl_seconds": 900,
+                    "kind": "base",
                     "layout": "status_card",
                     "content": {
                       "title": "Home Server",
@@ -114,8 +113,7 @@
                     "id": "evt_example_0001",
                     "device": "kitchen-01",
                     "channel": "home.status",
-                    "priority": 50,
-                    "ttl_seconds": 900,
+                    "kind": "base",
                     "layout": "alert",
                     "content": {
                       "severity": "high",
@@ -132,8 +130,7 @@
                     "id": "evt_example_0001",
                     "device": "kitchen-01",
                     "channel": "home.status",
-                    "priority": 50,
-                    "ttl_seconds": 900,
+                    "kind": "base",
                     "layout": "list",
                     "content": {
                       "title": "Shopping",
@@ -153,8 +150,7 @@
                     "id": "evt_example_0001",
                     "device": "kitchen-01",
                     "channel": "home.status",
-                    "priority": 50,
-                    "ttl_seconds": 900,
+                    "kind": "base",
                     "layout": "metric",
                     "content": {
                       "label": "Solar output",
@@ -172,8 +168,7 @@
                     "id": "evt_example_0001",
                     "device": "kitchen-01",
                     "channel": "home.status",
-                    "priority": 50,
-                    "ttl_seconds": 900,
+                    "kind": "base",
                     "layout": "qr",
                     "content": {
                       "title": "Guest WiFi",

@@ -4,7 +4,7 @@ it small and lazy).
 Tables match SCHEMA.md sec 6 exactly:
   - tokens(id, token_sha256 UNIQUE, kind, device_id, channels JSON|NULL, rate_per_min, created_at)
   - devices(id, channels JSON, fallback JSON, poll_interval_s, low_batt_interval_s)
-  - events(id PK, device, channel, priority, ttl_seconds, layout, content JSON, received_at, raw_size)
+  - events(id PK, device, channel, kind, priority, ttl_seconds, layout, content JSON, received_at, raw_size)
   - INDEX idx_events_device(device, channel, received_at)
 
 A fresh sqlite3 connection is opened per call. Connections are cheap, this is a
@@ -82,6 +82,7 @@ class EventRow:
     content: dict[str, Any]
     received_at: int
     raw_size: int
+    kind: str = "base"
 
 
 _SCHEMA_SQL = """
@@ -112,6 +113,7 @@ CREATE TABLE IF NOT EXISTS events (
   id          TEXT PRIMARY KEY,
   device      TEXT NOT NULL,
   channel     TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'base',
   priority    INTEGER NOT NULL,
   ttl_seconds INTEGER NOT NULL,
   layout      TEXT NOT NULL,
@@ -140,6 +142,9 @@ class Store:
 
     # --- lifecycle --------------------------------------------------------------
 
+    # Columns added after v1; ALTER them onto pre-existing rows.
+    _EVENT_COLUMNS = (("kind", "TEXT NOT NULL DEFAULT 'base'"),)
+
     # Telemetry columns added after v1; ALTER them onto pre-existing devices rows.
     _TELEMETRY_COLUMNS = (
         ("last_seen_at", "INTEGER"),
@@ -155,6 +160,11 @@ class Store:
             conn.executescript(_SCHEMA_SQL)
             # Migrate older DBs that predate the telemetry columns (names are
             # hardcoded constants, so the f-string ALTER is injection-safe).
+            event_existing = {r["name"] for r in conn.execute("PRAGMA table_info(events)")}
+            for name, decl in self._EVENT_COLUMNS:
+                if name not in event_existing:
+                    conn.execute(f"ALTER TABLE events ADD COLUMN {name} {decl}")
+
             existing = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
             for name, decl in self._TELEMETRY_COLUMNS:
                 if name not in existing:
@@ -455,13 +465,14 @@ class Store:
         with self._conn() as conn:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO events"
-                " (id, device, channel, priority, ttl_seconds, layout, content,"
+                " (id, device, channel, kind, priority, ttl_seconds, layout, content,"
                 "  received_at, raw_size)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     event.id,
                     event.device,
                     event.channel,
+                    event.kind,
                     event.priority,
                     event.ttl_seconds,
                     event.layout,
@@ -475,7 +486,7 @@ class Store:
     def events_for_device(self, device_id: str) -> list[EventRow]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, device, channel, priority, ttl_seconds, layout, content,"
+                "SELECT id, device, channel, kind, priority, ttl_seconds, layout, content,"
                 " received_at, raw_size FROM events WHERE device = ?",
                 (device_id,),
             ).fetchall()
@@ -484,6 +495,7 @@ class Store:
                 id=r["id"],
                 device=r["device"],
                 channel=r["channel"],
+                kind=r["kind"],
                 priority=r["priority"],
                 ttl_seconds=r["ttl_seconds"],
                 layout=r["layout"],
@@ -500,7 +512,7 @@ class Store:
         """Recent events for a device, NEWEST FIRST (for the admin event log)."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, device, channel, priority, ttl_seconds, layout, content,"
+                "SELECT id, device, channel, kind, priority, ttl_seconds, layout, content,"
                 " received_at, raw_size FROM events WHERE device = ?"
                 " ORDER BY received_at DESC, id DESC LIMIT ?",
                 (device_id, int(limit)),
@@ -510,6 +522,7 @@ class Store:
                 id=r["id"],
                 device=r["device"],
                 channel=r["channel"],
+                kind=r["kind"],
                 priority=r["priority"],
                 ttl_seconds=r["ttl_seconds"],
                 layout=r["layout"],

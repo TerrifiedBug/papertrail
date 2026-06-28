@@ -43,7 +43,7 @@ from .auth import (
 )
 from .firmware_manifest import build_manifest
 from .resolve import current
-from .schema import CONTENT_MODELS, SCHEMA_VERSION, validate_envelope, validate_fallback
+from .schema import CONTENT_MODELS, INTERRUPT_DEFAULT_TTL, SCHEMA_VERSION, validate_envelope, validate_fallback
 from .store import EventRow, Store, sha256_hex
 
 DEFAULT_MAX_BODY_BYTES = 8192        # 8 KiB hard cap -> 413
@@ -118,8 +118,7 @@ def _ingest_examples() -> dict[str, Any]:
         "id": "evt_example_0001",
         "device": "kitchen-01",
         "channel": "home.status",
-        "priority": 50,
-        "ttl_seconds": 900,
+        "kind": "base",
     }
     out: dict[str, Any] = {}
     for layout, model in CONTENT_MODELS.items():
@@ -154,6 +153,7 @@ _CURRENT_EXAMPLE = {
     },
     "control": {"poll_interval": 120, "fw": "a1b2c3d4e5f6"},
     "source_event_id": None,
+    "kind": None,
     "priority": None,
     "etag": "c0ffee...",
     "rendered_at": 1750000000,
@@ -356,6 +356,7 @@ def create_app(
                 "content": resolution.content,
                 "etag": resolution.etag,
                 "source_event_id": resolution.source_event_id,
+                "kind": resolution.kind,
                 "priority": resolution.priority,
             },
         }
@@ -426,8 +427,12 @@ def create_app(
             id=envelope.id,
             device=envelope.device,
             channel=envelope.channel,
+            kind=envelope.kind,
             priority=envelope.priority,
-            ttl_seconds=envelope.ttl_seconds or 0,   # None/omitted => 0 = no expiry
+            ttl_seconds=(
+                0 if envelope.kind == "base"
+                else (envelope.ttl_seconds or INTERRUPT_DEFAULT_TTL)
+            ),
             layout=envelope.layout,
             content=envelope.content,
             received_at=received_at,
@@ -853,6 +858,7 @@ def create_app(
             "id": raw.get("id") or _gen_event_id(),
             "device": device_id,
             "channel": raw.get("channel"),
+            "kind": raw.get("kind", "base"),
             "priority": raw.get("priority", 0),
             "ttl_seconds": raw.get("ttl_seconds"),
             "layout": raw.get("layout"),
@@ -868,8 +874,12 @@ def create_app(
             id=envelope.id,
             device=envelope.device,
             channel=envelope.channel,
+            kind=envelope.kind,
             priority=envelope.priority,
-            ttl_seconds=envelope.ttl_seconds or 0,   # None/omitted => 0 = no expiry
+            ttl_seconds=(
+                0 if envelope.kind == "base"
+                else (envelope.ttl_seconds or INTERRUPT_DEFAULT_TTL)
+            ),
             layout=envelope.layout,
             content=envelope.content,
             received_at=received_at,

@@ -22,6 +22,7 @@ def _event(ttl, received_at=1000):
     return EventRow(
         id="e1", device="d", channel="c", priority=50, ttl_seconds=ttl,
         layout="status_card", content=_CARD, received_at=received_at, raw_size=10,
+        kind="interrupt",
     )
 
 
