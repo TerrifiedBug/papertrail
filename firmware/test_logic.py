@@ -303,6 +303,21 @@ def test_status_card_fields():
     assert c.ops[0] == ("fill", PAPER), "frame cleared to PAPER"
 
 
+def test_status_card_wraps_long_lines():
+    c = RecordingCanvas()
+    render.render_status_card(c, {
+        "title": "T", "status": "OK", "subtitle": "",
+        # 32-char line must WRAP across two body rows, not clip with "..."
+        "lines": ["Weather 19C clear, H22, rain 82%", "Calendar clear"],
+        "footer": "",
+    })
+    body = [o for o in c.texts() if o[2] == 4 and o[3] in (40, 51, 62, 73, 84)]
+    shown = " ".join(o[1] for o in body)
+    assert "rain 82%" in shown, "long line wrapped -> full text shown"
+    assert "..." not in shown, "no ellipsis when it fits the 5-row budget"
+    assert any(o[1] == "Calendar clear" for o in body), "next line still shown after the wrap"
+
+
 def test_metric_centering():
     c = RecordingCanvas()
     render.render_metric(c, {
@@ -526,6 +541,7 @@ TESTS = [
     test_clip,
     test_wrap,
     test_status_card_fields,
+    test_status_card_wraps_long_lines,
     test_metric_centering,
     test_list_fields,
     test_alert_high_inversion,

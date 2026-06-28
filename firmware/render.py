@@ -98,8 +98,16 @@ def render_status_card(canvas, content):
     canvas.text(status, 246 - 8 * len(status), 6, INK, 1)  # S1 right-aligned badge
     canvas.hline(20)
     canvas.text(clip(_s(content, "subtitle"), 30), 4, 25, INK, 1)
-    for i, line in enumerate(_list(content, "lines")[:5]):  # rows y=40,51,62,73,84
-        canvas.text(clip(line, 30), 4, 40 + 11 * i, INK, 1)
+    # Wrap each body line to the panel width, flowing into the 5-row budget, so a
+    # long line spills onto the next row instead of clipping with "..." (a line
+    # that overflows the remaining budget still clips on its last shown row).
+    rows = []
+    for line in _list(content, "lines"):
+        if len(rows) >= 5:
+            break
+        rows.extend(wrap(line, 30, 5 - len(rows)))
+    for i, row in enumerate(rows[:5]):                      # body rows y=40,51,62,73,84
+        canvas.text(row, 4, 40 + 11 * i, INK, 1)
     canvas.hline(100)
     canvas.text(clip(_s(content, "footer"), 30), 4, 110, INK, 1)
 
