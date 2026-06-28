@@ -68,14 +68,33 @@ dashboard renders relative age from it.
 Footgun the UI surfaces: a `base` with no replacement sticks until deleted — the dashboard
 offers event-delete to clear a stuck screen.
 
-## Deferred (designed, not yet built)
+## Planned (curated 2026-06-28)
 
-- **Hardening — firmware signing (deferred).** OTA today trusts the manifest by `sha256`
-  (integrity, not authenticity); the v1 threat model is **LAN + device-token-gated**. A future
-  revision **signs the manifest** — HMAC with a flash-baked key, or Ed25519 with the bridge
-  holding the private key and the device only the public key — and verifies the signature
-  **before** trusting any `sha`, closing the LAN-MITM gap. See
-  [`ota.md`](ota.md#hardening--firmware-signing-deferred).
+Prioritised after the live-debugging session. **Dropped:** firmware **signing** (OTA is
+LAN-only + device-token-gated + `sha256`-verified for integrity; authenticity only matters
+against a LAN MITM — out of scope for a trusted home network); **wiring more webhook sources**
+(added ad-hoc as needed); an **HTTPS flasher origin** (Caddy already fronts the UI with HTTPS,
+so the flasher gets its secure context for free).
+
+### Reliability & control
+
+- **`control.force_full_refresh`** — a bridge→device one-shot that forces a full redraw **even
+  on a `304`** (clears ghosting / un-sticks a frozen screen — today's incident in one click, not
+  a hand-inserted event). Rides the `control` block like `poll_interval`/`fw`, kept OUT of the
+  ETag; carry a monotonic token so the device acts once and the bridge clears it on ack.
+  Dashboard "Force refresh" button.
+- **One-shot device actions** — `reboot` / `clear` (wipe to fallback) / `force_full_refresh`
+  via `control`, with an **ack**: the device echoes the action token in its next telemetry and
+  the bridge clears it, so the action never repeats every poll. (Sketched in `security.md`.)
+- **Schema-version table + honest inserts** — a `meta(key,value)` row holding `schema_version`;
+  `init_db` runs **ordered, versioned migrations** instead of column-sniffing (both prod
+  footguns — `add kind`, `drop priority` — came from sniffing). And `insert_event` must
+  distinguish **dedup from constraint failure**: catch `IntegrityError`, treat ONLY a PK(`id`)
+  conflict as a dedup no-op, re-raise/log anything else — `INSERT OR IGNORE` silently masking a
+  NOT-NULL error as a "200 duplicate" cost real debugging today.
+- **Diagnostics — `GET /api/admin/diag` + a dashboard card** — schema_version, table row counts,
+  per-device last_seen + reported `fw` vs the bridge manifest (flag drift / a stuck device),
+  resolve sanity. Today's root cause would've been one glance.
 - **OTA residual hardening — VALIDATE ON-DEVICE before trusting remote (no-USB) OTA.** The
   core brick-guarantees hold (immutable `boot.py`, protected files never pulled/deleted,
   reset-on-crash, atomic + sha-verified writes, manifest-committed-last, pending-version
@@ -100,11 +119,26 @@ offers event-delete to clear a stuck screen.
   - On-device smoke tests to run first: (a) interrupt `apply()` before commit → confirm the NEW
     version is quarantined; (b) crash-loop with empty `/backup` → confirm long-idle, not reset-loop;
     (c) a `cycle()` throw → confirm `boot_count` increments and the guard heals.
-- One-shot device actions — `reboot` / `clear` / `force_full_refresh` — with the
-  ack-handshake (sketched in [`security.md`](security.md)).
-- Per-event render hints (`invert`, `full_refresh`).
-- Productionize: deploy the bridge on the homelab (Docker/GHCR + Caddy), wire real webhook
-  sources (Home Assistant, CI, cron, the daily dashboard push).
+- **Per-event render hints** — optional `invert` / `full_refresh` flags on an event that the
+  renderer honors (per-screen inversion; force a full panel refresh to clear ghosting).
+
+### Features
+
+- **Image / icon layout** — a new `image` layout: a 1-bit (+ optional red plane) **dithered
+  bitmap** (base64 `content.data` + `w`/`h`), drawn via `framebuf.blit`; server size-cap + a JS
+  preview decode. Weather icons, logos, glyphs — the biggest step beyond text.
+- **Battery graph + runtime estimate** — persist a battery time-series (`battery_samples(device,
+  at, pct)`; the bridge already records `last_batt`); dashboard sparkline + a linear-fit
+  "≈ N days left".
+- **Quiet hours / adaptive cadence** — per-device `quiet_start`/`quiet_end` (skip the refresh +
+  long overnight deepsleep) and a poll interval that stretches as the battery drops. Real LiPo
+  runtime gains.
+- **papertrail MCP server** — wrap the ingest API as an MCP `send_screen` tool (+ `list_devices`
+  / `clear`) so any agent (your TARS/Hermes) pushes to the display natively, reading `BASE_URL` +
+  an ingest token from env. Builds on [`for-agents.md`](for-agents.md).
+
+### Done / resolved (record)
+
 - **Text-fit guardrails — DONE.** Every field is bounded: single-line fields `clip()` with an
   ellipsis, scale-2 headers are clipped to their box (`status_card`/`alert` titles), and
   `status_card` `lines` + `alert` messages **word-wrap** into their row budget — a long line
