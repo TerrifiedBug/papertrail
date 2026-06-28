@@ -104,3 +104,7 @@ same commit as the admin GUI.
 - Productionize: deploy the bridge on the homelab (Docker/GHCR + Caddy), wire real webhook
   sources (Home Assistant, CI, cron, the daily dashboard push).
 - Battery discharge-curve calibration (the LiPo voltage→% curve is rough-linear today).
+- **On-screen battery indicator** — draw a small battery glyph + `%` in the **bottom-right**
+  corner of the panel (currently free space on every layout). Best as a global overlay in
+  `render.draw_to_epd` after the layout renders, fed the `pct` already read in `main.read_battery`;
+  on the tri-color panel, render it **red** when low. Appears on all 5 layouts.
