@@ -68,13 +68,17 @@ dashboard renders relative age from it.
 Footgun the UI surfaces: a `base` with no replacement sticks until deleted — the dashboard
 offers event-delete to clear a stuck screen.
 
-## Planned (curated 2026-06-28)
+## Shipped — reliability + features batch (2026-06-28)
 
-Prioritised after the live-debugging session. **Dropped:** firmware **signing** (OTA is
-LAN-only + device-token-gated + `sha256`-verified for integrity; authenticity only matters
-against a LAN MITM — out of scope for a trusted home network); **wiring more webhook sources**
-(added ad-hoc as needed); an **HTTPS flasher origin** (Caddy already fronts the UI with HTTPS,
-so the flasher gets its secure context for free).
+**✅ All of the below were built in one batch**: `control.force_full_refresh` + one-shot
+actions, schema-version + honest inserts, diagnostics, quiet hours, per-event hints, image
+layout, battery graph + runtime, MCP server, and the OTA streaming download. Two notes vs the
+original sketch — the one-shot action is **deliver-once** (cleared on the 200 that carries it;
+its token is hashed into the ETag so it can't be lost to a 304) rather than an ack-handshake;
+quiet hours is **server-computed** (the bridge stretches `poll_interval` in the window, so the
+clock-less device is unchanged). **Dropped:** firmware **signing** (LAN + device-token threat
+model needs integrity, not authenticity); **ad-hoc webhook sources**; an **HTTPS flasher
+origin** (Caddy fronts the UI). Design notes kept below for reference.
 
 ### Reliability & control
 
@@ -107,12 +111,9 @@ so the flasher gets its secure context for free).
   - **Interrupted-apply reconcile:** on a power cut mid-rename, the on-disk bytes no longer
     match the local manifest; the next delta plan is wrong. Detect a leftover `pending_fw.txt`
     at `apply()` start and reconcile (restore `/backup` first) before planning.
-  - **Stream the OTA download (memory):** `ota.py` buffers each file via `resp.content`
-    (whole file in RAM) before hashing/writing — a ~36KB file (`uQR.py`) can MemoryError on
-    the Pico's fragmented ~256KB heap (the web flasher already hit this and now chunks at 4KB).
-    Fix `ota.apply()` to stream the `urequests` body in chunks: incremental `sha256.update()`
-    + chunked `f.write()`, never holding the whole file. (Rare in practice — deltas pull 1–2
-    files on a freer fresh-boot heap — but the same bug class.)
+  - **Stream the OTA download (memory) — DONE.** `_download_verified` streams `resp.raw` in
+    512B chunks (incremental `sha256` + write to `<path>.new`, `Connection: close` to EOF the
+    body), so a big file can't MemoryError. Verify on-device alongside the others.
   - **Heal a latched crash-counter:** the flasher should zero `boot_count.txt` when laying
     down firmware (a no-backup crash-loop currently latches the counter high). Clear
     `pending_fw.txt` on the recovery paths; only zero the counter when a restore actually wrote.
