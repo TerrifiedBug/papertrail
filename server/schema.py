@@ -163,6 +163,10 @@ class Envelope(BaseModel):
     # ignore ttl_seconds entirely and persist until replaced. Positive values cap
     # at TTL_CAP = 7 days.
     ttl_seconds: Optional[int] = Field(default=None, ge=0)
+    # Per-event render hints (optional): draw inverted; force a full panel refresh
+    # (a no-op on the always-full-refresh tri-color panel, honored where supported).
+    invert: bool = False
+    full_refresh: bool = False
     layout: Layout
     content: dict[str, Any]
 

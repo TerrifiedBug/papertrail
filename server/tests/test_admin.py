@@ -402,3 +402,39 @@ def test_revoke_token(admin_ctx):
 
 def test_revoke_unknown_token_404(admin_ctx):
     assert admin_ctx.client.delete(f"{TOKENS}/deadbeefdeadbeef", headers=admin_bearer()).status_code == 404
+
+
+# --- v3: one-shot actions, quiet hours, diagnostics ----------------------------
+
+def test_action_delivered_once_via_poll(admin_ctx):
+    r = admin_ctx.client.post(f"{DEVICES}/{DEVICE_ID}/action",
+                              headers=admin_bearer(), json={"action": "force_full_refresh"})
+    assert r.status_code == 202
+    g = admin_ctx.client.get(f"/api/devices/{DEVICE_ID}/current", headers=bearer(DEVICE_TOKEN))
+    assert g.status_code == 200
+    assert g.json()["control"]["action"]["name"] == "force_full_refresh"
+    # deliver-once: a fresh poll no longer carries the action
+    g2 = admin_ctx.client.get(f"/api/devices/{DEVICE_ID}/current", headers=bearer(DEVICE_TOKEN))
+    assert "action" not in (g2.json().get("control") or {})
+
+
+def test_bad_action_422(admin_ctx):
+    r = admin_ctx.client.post(f"{DEVICES}/{DEVICE_ID}/action",
+                              headers=admin_bearer(), json={"action": "selfdestruct"})
+    assert r.status_code == 422
+
+
+def test_config_sets_quiet_hours(admin_ctx):
+    r = admin_ctx.client.patch(f"{DEVICES}/{DEVICE_ID}/config",
+                               headers=admin_bearer(), json={"quiet_start_h": 23, "quiet_end_h": 7})
+    assert r.status_code == 200 and r.json()["quiet_start_h"] == 23
+    bad = admin_ctx.client.patch(f"{DEVICES}/{DEVICE_ID}/config",
+                                 headers=admin_bearer(), json={"quiet_start_h": 99})
+    assert bad.status_code == 422
+
+
+def test_diag_endpoint(admin_ctx):
+    d = admin_ctx.client.get("/api/admin/diag", headers=admin_bearer()).json()
+    assert d["schema_version"] is not None
+    assert "events" in d["counts"] and "devices" in d["counts"]
+    assert isinstance(d["devices"], list)

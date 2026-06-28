@@ -90,6 +90,8 @@ class EventRow:
     received_at: int
     raw_size: int
     kind: str = "base"
+    invert: int = 0           # per-event render hint: draw inverted
+    full_refresh: int = 0     # per-event render hint: force a full panel refresh
 
 
 _SCHEMA_SQL = """
@@ -134,7 +136,9 @@ CREATE TABLE IF NOT EXISTS events (
   layout      TEXT NOT NULL,
   content     TEXT NOT NULL,
   received_at INTEGER NOT NULL,
-  raw_size    INTEGER NOT NULL
+  raw_size    INTEGER NOT NULL,
+  invert       INTEGER NOT NULL DEFAULT 0,
+  full_refresh INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_device ON events(device, channel, received_at);
@@ -175,7 +179,11 @@ class Store:
     # an already-existing table -- we ALTER each missing one in on startup
     # (idempotent, PRAGMA-guarded). Names are hardcoded constants, so the ALTER
     # string is injection-safe.
-    _EVENT_COLUMNS = (("kind", "TEXT NOT NULL DEFAULT 'base'"),)
+    _EVENT_COLUMNS = (
+        ("kind", "TEXT NOT NULL DEFAULT 'base'"),
+        ("invert", "INTEGER NOT NULL DEFAULT 0"),
+        ("full_refresh", "INTEGER NOT NULL DEFAULT 0"),
+    )
     _TELEMETRY_COLUMNS = (
         ("last_seen_at", "INTEGER"),
         ("last_batt", "INTEGER"),
@@ -605,8 +613,8 @@ class Store:
                 conn.execute(
                     "INSERT INTO events"
                     " (id, device, channel, kind, ttl_seconds, layout, content,"
-                    "  received_at, raw_size)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  received_at, raw_size, invert, full_refresh)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         event.id,
                         event.device,
@@ -617,6 +625,8 @@ class Store:
                         json.dumps(event.content),
                         event.received_at,
                         event.raw_size,
+                        event.invert,
+                        event.full_refresh,
                     ),
                 )
                 return True
@@ -632,7 +642,7 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, device, channel, kind, ttl_seconds, layout, content,"
-                " received_at, raw_size FROM events WHERE device = ?"
+                " received_at, raw_size, invert, full_refresh FROM events WHERE device = ?"
                 " ORDER BY received_at, rowid",
                 (device_id,),
             ).fetchall()
@@ -647,6 +657,8 @@ class Store:
                 content=json.loads(r["content"]),
                 received_at=r["received_at"],
                 raw_size=r["raw_size"],
+                invert=r["invert"],
+                full_refresh=r["full_refresh"],
             )
             for r in rows
         ]
@@ -658,7 +670,7 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, device, channel, kind, ttl_seconds, layout, content,"
-                " received_at, raw_size FROM events WHERE device = ?"
+                " received_at, raw_size, invert, full_refresh FROM events WHERE device = ?"
                 " ORDER BY received_at DESC, id DESC LIMIT ?",
                 (device_id, int(limit)),
             ).fetchall()
@@ -673,6 +685,8 @@ class Store:
                 content=json.loads(r["content"]),
                 received_at=r["received_at"],
                 raw_size=r["raw_size"],
+                invert=r["invert"],
+                full_refresh=r["full_refresh"],
             )
             for r in rows
         ]

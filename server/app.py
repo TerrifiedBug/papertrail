@@ -42,7 +42,7 @@ from .auth import (
     parse_bearer,
 )
 from .firmware_manifest import build_manifest
-from .resolve import current
+from .resolve import DEVICE_ACTIONS, current
 from .schema import CONTENT_MODELS, INTERRUPT_DEFAULT_TTL, SCHEMA_VERSION, validate_envelope, validate_fallback
 from .store import EventRow, Store, sha256_hex
 
@@ -432,6 +432,8 @@ def create_app(
             ),
             layout=envelope.layout,
             content=envelope.content,
+            invert=int(envelope.invert),
+            full_refresh=int(envelope.full_refresh),
             received_at=received_at,
             raw_size=len(body),
         )
@@ -489,6 +491,9 @@ def create_app(
             last_fw=_qp_fw(fw),
             last_uptime=_qp_uptime(up),
         )
+        _b = _qp_clamp_int(batt, 0, 100)
+        if _b is not None:
+            store.record_battery_sample(device_id, int(time.time()), _b)
 
         # 5. resolve current screen (lazy TTL) + ETag. control.fw advertises the
         #    latest firmware version so OTA rides this poll; fw is kept OUT of the
@@ -500,6 +505,12 @@ def create_app(
         # 6. If-None-Match -> 304 (empty body) when unchanged
         if _if_none_match_hit(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers={"ETag": etag_header})
+
+        # Delivering a 200: a queued one-shot action is now carried in this body,
+        # so fire-and-clear it (deliver-once). A pending action always 200s because
+        # its token is hashed into the ETag, so it can never be lost to a 304.
+        if device.pending_action:
+            store.clear_action(device_id, device.action_token)
 
         return Response(
             status_code=200,
@@ -857,6 +868,8 @@ def create_app(
             "channel": raw.get("channel"),
             "kind": raw.get("kind", "base"),
             "ttl_seconds": raw.get("ttl_seconds"),
+            "invert": raw.get("invert", False),
+            "full_refresh": raw.get("full_refresh", False),
             "layout": raw.get("layout"),
             "content": raw.get("content"),
         }
@@ -877,6 +890,8 @@ def create_app(
             ),
             layout=envelope.layout,
             content=envelope.content,
+            invert=int(envelope.invert),
+            full_refresh=int(envelope.full_refresh),
             received_at=received_at,
             raw_size=len(json.dumps(envelope_in)),
         )
@@ -903,15 +918,67 @@ def create_app(
         raw = await _admin_json_body(request)
         if not isinstance(raw, dict):
             raise HTTPException(status_code=422, detail="body must be a JSON object")
-        unknown = sorted(set(raw) - {"poll_interval"})
+        unknown = sorted(set(raw) - {"poll_interval", "quiet_start_h", "quiet_end_h"})
         if unknown:
             raise HTTPException(status_code=422, detail=f"unknown config keys: {unknown}")
-        value = raw.get("poll_interval")
-        if not _is_int(value):
-            raise HTTPException(status_code=422, detail="poll_interval must be an integer")
-        clamped = max(POLL_INTERVAL_MIN, min(POLL_INTERVAL_MAX, value))
-        store.set_poll_interval(device_id, clamped)
-        return {"id": device_id, "poll_interval": clamped}
+        out: dict[str, Any] = {"id": device_id}
+        if "poll_interval" in raw:
+            value = raw["poll_interval"]
+            if not _is_int(value):
+                raise HTTPException(status_code=422, detail="poll_interval must be an integer")
+            clamped = max(POLL_INTERVAL_MIN, min(POLL_INTERVAL_MAX, value))
+            store.set_poll_interval(device_id, clamped)
+            out["poll_interval"] = clamped
+        if "quiet_start_h" in raw or "quiet_end_h" in raw:
+            qs = _quiet_hour(raw.get("quiet_start_h"))
+            qe = _quiet_hour(raw.get("quiet_end_h"))
+            store.set_quiet_hours(device_id, qs, qe)
+            out["quiet_start_h"], out["quiet_end_h"] = qs, qe
+        return out
+
+    @app.post("/api/admin/devices/{device_id}/action", tags=["admin"], status_code=202)
+    async def admin_device_action(device_id: str, request: Request):
+        """Queue a one-shot device action (reboot / clear / force_full_refresh).
+        Delivered on the device's next poll via the control block; its token is
+        hashed into the ETag so it reaches even a device otherwise stuck on 304."""
+        _require_admin(request)
+        if store.get_device(device_id) is None:
+            raise HTTPException(status_code=404, detail="unknown device")
+        raw = await _admin_json_body(request)
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=422, detail="body must be a JSON object")
+        action = raw.get("action")
+        if action not in DEVICE_ACTIONS:
+            raise HTTPException(
+                status_code=422, detail=f"action must be one of {list(DEVICE_ACTIONS)}"
+            )
+        token = store.set_pending_action(device_id, action)
+        return {"id": device_id, "action": action, "token": token}
+
+    @app.get("/api/admin/diag", tags=["admin"])
+    async def admin_diag(request: Request):
+        """Operational snapshot for the dashboard diagnostics card."""
+        _require_admin(request)
+        manifest = firmware.version
+        now = int(time.time())
+        return {
+            "schema_version": store.get_meta("schema_version"),
+            "firmware_manifest": manifest,
+            "counts": store.counts(),
+            "devices": [
+                {
+                    "id": d.id,
+                    "last_seen_at": d.last_seen_at,
+                    "online": d.last_seen_at is not None
+                    and (now - d.last_seen_at) < 3 * max(1, d.poll_interval_s),
+                    "fw": d.last_fw,
+                    "fw_current": d.last_fw == manifest,
+                    "pending_action": d.pending_action,
+                    "quiet_hours": [d.quiet_start_h, d.quiet_end_h],
+                }
+                for d in store.list_devices()
+            ],
+        }
 
     # --- admin API: tokens ------------------------------------------------------
 
@@ -1064,6 +1131,15 @@ def _if_none_match_hit(header: Optional[str], etag: str) -> bool:
 def _is_int(value: Any) -> bool:
     """True for a real int (a JSON bool is NOT a valid integer here)."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _quiet_hour(v: Any) -> Optional[int]:
+    """A quiet-hours bound: None clears it; otherwise an int hour 0..23 (else 422)."""
+    if v is None:
+        return None
+    if not _is_int(v) or not (0 <= v <= 23):
+        raise HTTPException(status_code=422, detail="quiet hour must be null or 0..23")
+    return v
 
 
 def _gen_event_id() -> str:

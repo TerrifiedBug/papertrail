@@ -840,6 +840,67 @@
         }
       }
     },
+    "/api/admin/devices/{device_id}/action": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Device Action",
+        "description": "Queue a one-shot device action (reboot / clear / force_full_refresh).\nDelivered on the device's next poll via the control block; its token is\nhashed into the ETag so it reaches even a device otherwise stuck on 304.",
+        "operationId": "admin_device_action_api_admin_devices__device_id__action_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/diag": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Diag",
+        "description": "Operational snapshot for the dashboard diagnostics card.",
+        "operationId": "admin_diag_api_admin_diag_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/tokens": {
       "get": {
         "tags": [
