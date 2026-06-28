@@ -457,14 +457,28 @@ function rectOutline(ctx, x, y, w, h, color) {
   ctx.fillRect(x, y, 1, h);
   ctx.fillRect(x + w - 1, y, 1, h);
 }
-function clip(s, N) {
+// 8x8 device font is ASCII-only -> mirror firmware _ascii so the preview shows
+// exactly what the panel will (e.g. "19°C" -> "19C"). Non-ASCII typography maps
+// to ASCII; anything else is dropped.
+const _ASCII_MAP = {"°":"","–":"-","—":"-","‘":"'","’":"'","“":'"',"”":'"',"…":"...","×":"x","µ":"u","£":"GBP","€":"EUR"};
+function asciiSafe(s) {
   s = (s == null) ? "" : String(s);
+  let out = "";
+  for (const ch of s) {
+    const o = ch.codePointAt(0);
+    if (o >= 0x20 && o <= 0x7e) out += ch;
+    else if (_ASCII_MAP[ch] !== undefined) out += _ASCII_MAP[ch];
+  }
+  return out;
+}
+function clip(s, N) {
+  s = asciiSafe(s);
   if (s.length <= N) return s;
   if (N <= 3) return s.slice(0, N);
   return s.slice(0, N - 3) + "...";
 }
 function wrapLines(s, N, L) {
-  s = (s == null) ? "" : String(s).trim();
+  s = asciiSafe(s).trim();
   const words = s.length ? s.split(/\s+/) : [];
   const lines = [];
   let cur = "";

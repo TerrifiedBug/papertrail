@@ -318,6 +318,19 @@ def test_status_card_wraps_long_lines():
     assert any(o[1] == "Calendar clear" for o in body), "next line still shown after the wrap"
 
 
+def test_ascii_sanitizes_non_renderable():
+    # the reported bug: the 8x8 font can't render the degree sign -> drop it
+    assert render.clip("19°C", 30) == "19C", "degree dropped -> 19C"
+    # common typography mapped to ASCII
+    assert render.clip("it’s “warm”", 30) == 'it\'s "warm"', "smart quotes -> ascii"
+    assert render.clip("a — b …", 30) == "a - b ...", "em-dash + ellipsis"
+    # unknown non-ASCII (emoji) dropped, never garbage
+    assert render.clip("hi \U0001F600 x", 30) == "hi  x", "emoji dropped"
+    # wrap sanitizes too: nothing non-ASCII reaches the font
+    joined = "".join(render.wrap("temp 19°C now", 30, 2))
+    assert all(0x20 <= ord(ch) <= 0x7e for ch in joined), "wrap output is pure ASCII"
+
+
 def test_metric_centering():
     c = RecordingCanvas()
     render.render_metric(c, {
@@ -540,6 +553,7 @@ TESTS = [
     test_ota_crash_loop,
     test_clip,
     test_wrap,
+    test_ascii_sanitizes_non_renderable,
     test_status_card_fields,
     test_status_card_wraps_long_lines,
     test_metric_centering,
