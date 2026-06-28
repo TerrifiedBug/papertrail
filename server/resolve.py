@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .schema import SCHEMA_VERSION, validate_fallback
+from .schema import INTERRUPT_DEFAULT_TTL, SCHEMA_VERSION, validate_fallback
 from .store import DeviceRow, EventRow, Store
 
 # Last-resort idle screen if a device's configured fallback is somehow invalid at
@@ -119,9 +119,14 @@ def resolve_from_events(
     subscribed = set(device.channels)
 
     def live_interrupt(e: EventRow) -> bool:
-        return e.channel in subscribed and e.kind == "interrupt" and (
-            e.ttl_seconds is None or e.ttl_seconds <= 0 or now < e.received_at + e.ttl_seconds
-        )
+        # An interrupt is ALWAYS temporary: a missing/<=0 ttl falls back to the
+        # default lifetime, never "permanent" (permanence is base's job). Ingest
+        # already coerces an interrupt's omitted/0 ttl -> INTERRUPT_DEFAULT_TTL;
+        # this mirrors it so a directly-built row can't be permanent either.
+        if e.channel not in subscribed or e.kind != "interrupt":
+            return False
+        ttl = e.ttl_seconds if (e.ttl_seconds and e.ttl_seconds > 0) else INTERRUPT_DEFAULT_TTL
+        return now < e.received_at + ttl
 
     interrupts = [e for e in events if live_interrupt(e)]
     bases = [e for e in events if e.channel in subscribed and e.kind == "base"]
