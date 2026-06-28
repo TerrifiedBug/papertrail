@@ -198,7 +198,7 @@ POST="$BASE/api/devices/kitchen-01/events"
 
 Each body matches the field names frozen in [`SCHEMA.md` §3](../SCHEMA.md) and the
 geometry in [`layout-specs.md`](layout-specs.md). On success the bridge returns
-`200 {"status":"stored","id":...}`; re-POSTing the same `id` returns
+`201 {"status":"stored","id":...}`; re-POSTing the same `id` returns
 `200 {"status":"duplicate","id":...}` (idempotent, first write wins).
 
 ### status_card
@@ -270,6 +270,20 @@ curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
 }'
 ```
 
+### image (inline 1-bit bitmap; only base64 on the wire, no external fetch)
+
+```bash
+curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
+  "schema":"pico-paper.v1","id":"evt_image_0001","device":"kitchen-01",
+  "channel":"home.status","kind":"base","layout":"image",
+  "content":{"title":"Logo","w":8,"h":8,"data":"gYGBgYGBgYE="}
+}'
+```
+
+`data` is base64 of `ceil(w/8)*h` bytes — a 1-bit MONO_HLSB bitmap (MSB = leftmost
+pixel, set bit = INK), rendered centered. The server checks
+`len(decode(data)) == ceil(w/8)*h` exactly (else `422`); `w`,`h` are `1..128`.
+
 After posting several, resolution prefers the **newest live (non-expired)
 `interrupt`** on a subscribed channel; with none live it shows the **newest `base`**
 screen, and with neither the device's **`fallback`** (idle) screen. With the above,
@@ -285,7 +299,8 @@ curl -sSi "$BASE/api/devices/kitchen-01/current" -H "$DEV"
 # ETag: "a1b2..."
 # {"schema":"pico-paper.v1","device":"kitchen-01","layout":"alert","content":{...},
 #  "control":{"poll_interval":120},
-#  "source_event_id":"evt_alert_0001","kind":"interrupt","etag":"a1b2...","rendered_at":...}
+#  "source_event_id":"evt_alert_0001","kind":"interrupt","hints":null,"received_at":...,
+#  "etag":"a1b2...","rendered_at":...}
 
 # Conditional GET: pass the ETag you last rendered.
 curl -sSi "$BASE/api/devices/kitchen-01/current" -H "$DEV" \
@@ -293,9 +308,9 @@ curl -sSi "$BASE/api/devices/kitchen-01/current" -H "$DEV" \
 # 304 Not Modified  (empty body) when unchanged -> the Pico skips the ePaper refresh.
 ```
 
-The ETag is `sha256(canonical_json({content, device, layout, control}))` — only
-those keys are hashed, so `rendered_at`, `source_event_id`, and `kind` never
-churn it. The screen is stable across polls until the content (or `control`)
+The ETag is `sha256(canonical_json({content, device, layout, control}))` (plus a
+`hints` key only when an event sets `invert` / `full_refresh`) — those are the only
+keys hashed, so `rendered_at`, `source_event_id`, and `kind` never churn it. The screen is stable across polls until the content (or `control`)
 actually changes; a `poll_interval` change busts the `304` exactly once so the
 Pico picks it up. The `"control"` key is **not** the device id — that is the
 separate top-level `"device"` string.

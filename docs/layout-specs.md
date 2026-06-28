@@ -68,7 +68,7 @@ small and every size pixel-deterministic.
 
 `hline(y)` = 1 px INK horizontal rule spanning `x 0..249` at row `y`.
 
-### Battery badge (overlay, all 5 layouts)
+### Battery badge (overlay, all 6 layouts)
 
 After a layout renders, `render.draw_battery` overlays a badge in the **bottom-right**
 corner (`x≈188..246, y≈109..121`): the charge `%` + a level-filled battery glyph, a `+`
@@ -253,6 +253,29 @@ Recommend ASCII trend tokens (no arrow glyph in the 8x8 font): `UP`, `DN`, `FLAT
 - Centre the rendered QR inside the 90x90 box:
   `rendered = module_px * qr_modules`,
   `x_off = 8 + (90 - rendered)//2`, `y_off = 26 + (90 - rendered)//2`.
+
+---
+
+## `image`
+
+A 1-bit bitmap drawn **centered** — icons, logos, agent-rasterised glyphs. The full
+`content` shape lives in [`SCHEMA.md`](../SCHEMA.md); this is just the geometry
+(`firmware/render.py:render_image`).
+
+| region | field          | font | placement                       | rule |
+|--------|----------------|------|---------------------------------|------|
+| title  | `title`        | S1   | (4, 2), **optional**            | `clip(title,30)`; when present, draw `hline(14)` under it and start the bitmap band at `y0 = 18` (else `y0 = 0`) |
+| bitmap | `w`,`h`,`data` | —    | centered in the band below `y0` | see below |
+
+- `data` is base64 of `ceil(w/8)*h` bytes — a 1-bit **MONO_HLSB** bitmap: row-major,
+  the **MSB = leftmost pixel**, a **set bit = INK** (black). `w`,`h` are `1..128`;
+  `data` caps at **4096** base64 chars. The server checks
+  `len(decode(data)) == ceil(w/8)*h` exactly (else `422`).
+- **Centering:** `stride = (w + 7) // 8`,
+  `x_off = max(0, (250 - w)//2)` (across the full 250px width, no side margin),
+  `y_off = y0 + max(0, (122 - y0 - h)//2)` (within the band under the title).
+- Bad or short `data` fails safe to a **blank** screen on the device (the server
+  would already have `422`'d a malformed bitmap before it was stored).
 
 ---
 

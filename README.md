@@ -14,6 +14,7 @@ last image at **zero power**, so the tag can run for weeks on a small LiPo.
 - **Dashboard:** [`docs/dashboard.md`](docs/dashboard.md) — the LAN-only admin web UI (devices, tokens, live preview).
 - **Flashing:** [`docs/flashing.md`](docs/flashing.md) — provision a Pico over USB from the browser (config + firmware upload).
 - **OTA:** [`docs/ota.md`](docs/ota.md) — over-the-air firmware updates: manifest, delta pull, atomic write, rollback.
+- **MCP server:** [`mcp/`](mcp/) — wraps the ingest API as an MCP `send_screen` tool so an agent can push screens natively.
 - **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — shipped + what's next.
 
 ---
@@ -31,12 +32,13 @@ channel wins. If nothing exists, the device shows its configured **fallback**
 The Pico is deliberately dumb: it polls `GET /api/devices/:id/current`, sends the
 ETag of whatever it's currently showing in `If-None-Match`, and either gets a
 `304 Not Modified` (sleep, don't touch the panel) or a `200` with a fresh screen to
-render. Five fixed layouts cover most "tell me one thing" use cases:
-`status_card | alert | list | metric | qr`.
+render. Six fixed layouts cover most "tell me one thing" use cases:
+`status_card | alert | list | metric | qr | image`.
 
 There are no buttons and nothing is interactive — checkboxes in the `list` layout
-are decorative. QR codes are generated **on-device** from a short string; no images
-ever cross the wire.
+are decorative. QR codes are generated **on-device** from a short string (no image
+fetch); the only bitmap that ever crosses the wire is the optional `image` layout's
+small 1-bit blob (base64, capped) — there is still no external image fetch.
 
 ---
 
@@ -101,9 +103,22 @@ Two small additions on the device's own read path (both **additive** to
   **never** make a poll fail. The bridge stores them with a `last_seen_at`
   timestamp; read them back from `GET /api/devices/:id/status` (device token) for
   a dashboard.
+- **One-shot device actions.** The admin API can queue a `reboot` / `clear` /
+  `force_full_refresh` for a device (`POST /api/admin/devices/:id/action`). It
+  rides the next poll's `control` block and its token is folded into the ETag, so
+  it reaches a device even on a `304`; it is **deliver-once** (cleared on the `200`
+  that carries it), so it never loops.
+- **Per-event render hints.** An event may set `invert` / `full_refresh`; they
+  surface in a top-level `hints` block (and the ETag, when set). `full_refresh` is
+  a no-op on the always-full-refresh tri-color panel.
+- **Quiet hours.** A device can carry a quiet-hours window; inside it the bridge
+  stretches the poll interval (server-computed, so the clock-less Pico is unchanged).
 
 Full field rules and curl examples: [`SCHEMA.md` §4](SCHEMA.md) and
-[`docs/deploy.md`](docs/deploy.md#remote-poll-interval--telemetry).
+[`docs/deploy.md`](docs/deploy.md#remote-poll-interval--telemetry). The LAN-only
+[**admin dashboard**](docs/dashboard.md) also surfaces diagnostics (schema version,
+table counts, per-device firmware drift) and a per-device battery sparkline with a
+"~N days left" estimate.
 
 ### Interactive API docs
 
@@ -227,7 +242,7 @@ curl -sS -X POST https://paper.example.com/api/devices/kitchen-01/events \
   -H "Authorization: Bearer $INGEST_TOKEN" \
   -H "Content-Type: application/json" \
   --data @docs/payloads/status_card.json
-# -> 200 {"status":"stored","id":"evt_status_0001"}   (re-POST -> {"status":"duplicate"})
+# -> 201 {"status":"stored","id":"evt_status_0001"}   (re-POST -> 200 {"status":"duplicate"})
 ```
 
 ### 4. See what the device would render
@@ -235,7 +250,7 @@ curl -sS -X POST https://paper.example.com/api/devices/kitchen-01/events \
 ```bash
 curl -sS https://paper.example.com/api/devices/kitchen-01/current \
   -H "Authorization: Bearer $DEVICE_TOKEN"
-# -> 200 + ETag header + {schema,device,layout,content,control,source_event_id,kind,etag,rendered_at}
+# -> 200 + ETag header + {schema,device,layout,content,control,source_event_id,kind,hints,received_at,etag,rendered_at}
 ```
 
 ### 5. Point the Pico at it
@@ -252,7 +267,7 @@ curl -sS https://paper.example.com/api/devices/kitchen-01/current \
 
 ## Layout gallery
 
-Five frozen layouts, drawn to the 250x122 panel (black-only except `alert`'s red
+Six frozen layouts, drawn to the 250x122 panel (black-only except `alert`'s red
 banner — see below). Geometry is exact in
 [`docs/layout-specs.md`](docs/layout-specs.md); ready-to-POST bodies live in
 [`docs/payloads/`](docs/payloads/). ASCII mocks below (boxes ~ the 250x122 frame):
@@ -344,23 +359,44 @@ centered as one group.
 Only `qr_data` (<= 512 chars) is transmitted; the Pico encodes it locally with the
 vendored `uQR` MicroPython library. No image fetch, ever.
 
+### `image` — inline 1-bit bitmap (icons, logos, agent glyphs)
+
+```
++------------------------------------------------+
+| Logo                                           |  optional title S1
++------------------------------------------------+  hline(14)
+                                                    bitmap drawn centered
+                  # ##  ##                          (1-bit MONO_HLSB, set bit = INK)
+                  ##  ####                           w,h <= 128; data is base64 of
+                  # ##  ##                           ceil(w/8)*h bytes
++------------------------------------------------+
+```
+`content` is `{ "title"?, "w":1..128, "h":1..128, "data": base64 }` — a 1-bit
+MONO_HLSB bitmap (MSB = leftmost pixel, set bit = INK), rendered centered. The
+server checks `len(decode(data)) == ceil(w/8)*h` (else `422`). The only bitmap on
+the wire; no external fetch.
+
 ---
 
 ## Repo layout
 
 ```
 SCHEMA.md                  wire contract: envelope, resolution, auth, SQLite shapes
-docs/layout-specs.md       pixel geometry for all 5 layouts + hardware/battery
+docs/layout-specs.md       pixel geometry for all 6 layouts + hardware/battery
 docs/deploy.md             run the bridge, Caddy, tokens, channels, curl, daily push
-docs/security.md           threat model + implemented controls + out-of-scope + deferred
+docs/security.md           threat model + implemented controls + control plane + out-of-scope
+docs/dashboard.md          LAN-only admin web UI (devices, tokens, actions, diagnostics)
 docs/openapi.json          generated OpenAPI spec (server/dump_openapi.py writes it)
 docs/payloads/             canonical example bodies (one per layout) + device-config
 
 firmware/config.py         pin map + knobs (EPAPER_MODEL, EPAPER_Y_OFFSET, POWER_AUTO_SLEEP)
 firmware/main.py           boot entry: battery -> WiFi -> poll -> render -> sleep
+firmware/render.py         per-layout pixel rendering (shared by firmware + admin preview parity)
 firmware/epaper2in13b.py   vendored Waveshare tri-color 2.13-B V4 driver (default panel)
 firmware/epaper2in13.py    vendored mono 2.13 driver (EPAPER_MODEL="2.13" + EPAPER_REV)
 firmware/lib/uQR.py        vendored QR generator for the on-device `qr` layout
 firmware/test_panel_b.py   dev tool: on-device B V4 smoke test (black border + red bar)
 firmware/test_offset.py    dev tool: EPAPER_Y_OFFSET calibration loop
+
+mcp/                       MCP server: send_screen / list_devices tools over the ingest API
 ```

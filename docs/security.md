@@ -105,8 +105,8 @@ both layers.
 
 ### Layout allowlist + typed content (no injection, no SSRF)
 
-- `layout` must be one of `status_card | alert | list | metric | qr`; anything
-  else is `422`. The set is **frozen** for `pico-paper.v1`.
+- `layout` must be one of `status_card | alert | list | metric | qr | image`;
+  anything else is `422`. The set is **frozen** for `pico-paper.v1`.
 - `content` is validated field-by-field against the layout's typed shape; unknown
   shapes are rejected.
 - **No external image URLs, no embedded code, no HTML** are accepted, and the
@@ -172,47 +172,55 @@ that isn't there:
 
 ---
 
-## Deferred / future
+## Control plane (shipped)
 
-Sketched here so the design is on record, but **not built** in the MVP. Both ride
-the existing poll/control channel — no new transport, no inbound connection to the
-Pico (it stays poll-only, asleep between wakes).
+Three additive controls ride the existing poll/`control` channel — **no new
+transport, no inbound connection to the Pico** (it stays poll-only, asleep between
+wakes). All are `pico-paper.v1`-additive: old firmware ignores fields it doesn't know.
 
 ### One-shot device actions (`reboot` / `clear` / `force_full_refresh`)
 
-The current `control` block carries only **idempotent settings** (`poll_interval`):
-re-reading it on every poll is harmless. A one-shot **action** is different —
-naively putting `{"action":"reboot"}` in `control` would re-fire on **every** poll
-and wedge the device in a loop (reboot -> poll -> see reboot -> reboot ...).
+The `control` block normally carries only **idempotent settings** (`poll_interval`,
+`fw`): re-reading them every poll is harmless. A one-shot **action** is different —
+naively leaving `{"action":"reboot"}` in `control` would re-fire on **every** poll and
+wedge the device in a loop.
 
-The fix is an **ack handshake** keyed on a monotonic control id:
+The shipped fix is a **deliver-once token folded into the ETag**:
 
-- Server assigns each pending action a `control_id` and returns it in `control`,
-  e.g. `"control": {"poll_interval": 120, "action": "force_full_refresh", "control_id": 42}`.
-- The Pico performs the action, then **echoes the last-applied id** on its next
-  poll — piggybacked like telemetry, e.g. `GET .../current?...&ack=42`.
-- The server only surfaces an action whose `control_id` is **newer** than the
-  device's last `ack`. Once `ack == control_id`, the action is considered
-  delivered and is **cleared** from subsequent responses — so it fires **exactly
-  once** and cannot loop.
-- `reboot` / `clear` are inherently lossy (the Pico may die mid-action); the ack
-  is best-effort and the worst case is one missed or one repeated action, never a
-  loop. `force_full_refresh` would clear ghosting on the **mono** panel (which has a
-  partial-refresh mode); the shipped **tri-color B V4 is full-refresh only**, so it
-  is a no-op there.
+- An operator queues an action over the **admin** API
+  (`POST /api/admin/devices/{id}/action`, admin-token-gated + LAN-only). The bridge
+  stores a `pending_action` + a random `action_token` on the device row.
+- The device's next `GET .../current` carries the action in `control`
+  (`{"action": {"name": "...", "token": "..."}}`), and the **token is hashed into the
+  ETag** — so the action **busts a `304`** and reaches a device otherwise stuck on a
+  cached screen.
+- It is **deliver-once:** the bridge clears the pending action on the **`200` that
+  carries it** (fire-and-clear), so it fires **exactly once** and cannot loop. This is
+  simpler than an ack handshake — the ETag-busting token does the work an echo would,
+  and the device never has to report back.
+- `reboot` / `clear` (wipe to fallback) are inherently lossy (the Pico may die
+  mid-action); worst case is one missed or one repeated action, never a loop.
+  `force_full_refresh` clears ghosting on the **mono** panel; the shipped **tri-color
+  B V4 is full-refresh only**, so it is effectively a plain redraw there.
 
-This keeps the device strictly poll-driven and requires no always-on listener,
-preserving the deep-sleep battery model and the "no inbound to the Pico" boundary.
+This keeps the device strictly poll-driven, with no always-on listener — the deep-sleep
+battery model and the "no inbound to the Pico" boundary are preserved.
 
 ### Per-event render hints (`invert` / `full_refresh`)
 
-Today, inversion is **implicit** and layout-bound (only `alert` `severity:"high"`
-inverts + frames). A future additive `content`-adjacent hint could let any event
-opt into `invert` (white-on-ink) or `full_refresh` (force a full redraw instead of
-a partial one — only meaningful on the **mono** panel; the tri-color B V4 is always
-full-refresh) per event. These are **render hints only** —
-they change pixels/refresh mode on the device, never authz, validation, or
-resolution — and would ship additively (old firmware ignores unknown hints).
+An event may set optional `invert` / `full_refresh` booleans. They surface in a
+top-level `hints` block on `GET .../current` and are folded into the ETag **only when
+set** (a no-hint screen keeps its ETag). `invert` draws the screen white-on-ink;
+`full_refresh` forces a full redraw (a no-op on the always-full-refresh tri-color
+panel). These are **render hints only** — they change pixels/refresh mode on the
+device, never authz, validation, or resolution.
+
+### Quiet hours (server-computed)
+
+A device may carry a quiet-hours window (`quiet_start_h` / `quiet_end_h`, hours
+`0..23`, may wrap midnight). Inside the window the bridge **stretches the
+`poll_interval`** it advertises in `control`, so the clock-less Pico simply honors a
+longer overnight cadence — no device clock, no extra field on the wire.
 
 ---
 

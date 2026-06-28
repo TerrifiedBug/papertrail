@@ -163,11 +163,16 @@ quarantine automatically.
    flash cost tiny.)
 4. **Record the target:** write `pending_version.txt = <server version>` — so if the next boot
    crash-loops, recovery knows exactly which version to quarantine.
-5. **Per-file atomic pull (protected):** for each changed path —
-   `GET /api/firmware/file?path=<path>` → **verify `sha256`** against the manifest → write
-   `<path>.new` → `os.rename()` over the live file (atomic on the filesystem). Create `lib/` first
-   if it does not exist. The fetch only ever names a **manifest key**, so a pull can never reach
-   `config.py`, `secrets.py`, `boot.py`, or any path outside the firmware set.
+5. **Per-file atomic pull (protected, streamed):** for each changed path —
+   `GET /api/firmware/file?path=<path>` with `Connection: close`, then **stream the body in
+   512-byte chunks**, hashing (`sha256`) incrementally *as it is written* to `<path>.new` — the
+   whole file is never buffered in RAM (a big `resp.content` can MemoryError on the Pico's
+   fragmented heap; the web flasher hit the same class of bug). After the stream, **compare the
+   computed `sha256` against the manifest:** on a match, `os.rename()` `<path>.new` over the live
+   file (atomic on the filesystem); on a mismatch, the partial `<path>.new` is **removed** and the
+   live file is left untouched. Create `lib/` first if it does not exist. The fetch only ever names
+   a **manifest key**, so a pull can never reach `config.py`, `secrets.py`, `boot.py`, or any path
+   outside the firmware set.
 6. **Prune:** delete any local file that **left** the manifest — but **never** `config.py`,
    `secrets.py`, `boot.py`, `manifest.json`, or runtime `*.txt` files.
 7. **Commit:** write the new `manifest.json` **last** (so a crash mid-update leaves the old
@@ -217,9 +222,10 @@ The Pico W has a ~1MB filesystem and the firmware is ≈150KB. The design is sha
 - **Delta pulls.** Most updates touch 1–2 files; only those move. A full re-pull only happens on a
   first provision (where `manifest.json` is seeded so even that is a no-op — see
   [`flashing.md`](flashing.md)).
-- **Per-file atomic writes.** Writing `<path>.new` then renaming needs only **one changed file's
-  worth** of staging at a time (~tens of KB) — for a typical 1–2-file delta the flash overhead is
-  negligible.
+- **Per-file atomic writes, streamed.** Each file is pulled in 512-byte chunks straight to
+  `<path>.new` (hashed on the fly, never held whole in RAM), then renamed — so staging needs only
+  **one changed file's worth** of flash at a time (~tens of KB), and a large file can't exhaust the
+  Pico's fragmented heap mid-download. For a typical 1–2-file delta the flash overhead is negligible.
 - **Worst-case peak ≈ 3× the firmware.** A full re-pull holds three copies of a file at once: the
   **live** set, the `/backup/` of every old file, and the staged `.new` of every new file. With a
   ≈150KB firmware that peaks near **~450KB** — well under the ~1MB FS, so even an all-files update

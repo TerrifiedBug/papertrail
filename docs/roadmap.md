@@ -1,7 +1,8 @@
 # Papertrail — Roadmap
 
-Shipped: the FastAPI bridge + MicroPython firmware (see [`../README.md`](../README.md)).
-In progress: the admin dashboard ([`dashboard.md`](dashboard.md)). This tracks what's next.
+Shipped: the FastAPI bridge + MicroPython firmware + the LAN-only admin dashboard
+(see [`../README.md`](../README.md) and [`dashboard.md`](dashboard.md)). This tracks
+what's next.
 
 ## Shipped
 
@@ -19,7 +20,7 @@ In progress: the admin dashboard ([`dashboard.md`](dashboard.md)). This tracks w
   first OTA check is a no-op — a USB provision lands latest code + config in one go. See
   [`flashing.md`](flashing.md#layer-a2--also-upload-firmware).
 - **On-screen battery badge + calibrated curve + richer event history.** A bottom-right battery
-  badge (charge %, `+` when charging, **red** when low) on all 5 layouts; a piecewise-linear LiPo
+  badge (charge %, `+` when charging, **red** when low) on all 6 layouts; a piecewise-linear LiPo
   discharge curve (`config.BATTERY["curve"]` — a tunable calibration knob) replacing the
   rough-linear voltage→% map; and the admin events drawer now expands each event to its raw
   payload + a rendered ePaper preview.
