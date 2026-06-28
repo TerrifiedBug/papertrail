@@ -281,6 +281,21 @@ def test_events_newest_first_and_expired_flag(admin_ctx):
     assert events[1]["expired"] is True
 
 
+def test_events_include_layout_and_content_for_replay(admin_ctx):
+    # The admin events log carries the rendered layout + raw payload so the UI
+    # can show an ePaper preview and the exact JSON that was sent.
+    now = int(time.time())
+    payload = {"title": "Replay", "status": "OK", "subtitle": "sub", "lines": ["a", "b"], "footer": "ft"}
+    admin_ctx.store.insert_event(EventRow(
+        id="replay", device=DEVICE_ID, channel="home.status", ttl_seconds=600,
+        layout="status_card", content=payload, received_at=now, raw_size=10, kind="interrupt",
+    ))
+    ev = admin_ctx.client.get(f"{DEVICES}/{DEVICE_ID}/events", headers=admin_bearer()).json()[0]
+    assert ev["id"] == "replay"
+    assert ev["layout"] == "status_card"
+    assert ev["content"] == payload
+
+
 # --- config --------------------------------------------------------------------
 
 

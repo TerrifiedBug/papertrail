@@ -18,6 +18,11 @@ In progress: the admin dashboard ([`dashboard.md`](dashboard.md)). This tracks w
   `.py` set over USB alongside `secrets.py` + `config.DEVICE_ID`, seeding `manifest.json` so the
   first OTA check is a no-op — a USB provision lands latest code + config in one go. See
   [`flashing.md`](flashing.md#layer-a2--also-upload-firmware).
+- **On-screen battery badge + calibrated curve + richer event history.** A bottom-right battery
+  badge (charge %, `+` when charging, **red** when low) on all 5 layouts; a piecewise-linear LiPo
+  discharge curve (`config.BATTERY["curve"]` — a tunable calibration knob) replacing the
+  rough-linear voltage→% map; and the admin events drawer now expands each event to its raw
+  payload + a rendered ePaper preview.
 
 ## Web-based device provisioning / flashing
 
@@ -100,13 +105,6 @@ offers event-delete to clear a stuck screen.
 - Per-event render hints (`invert`, `full_refresh`).
 - Productionize: deploy the bridge on the homelab (Docker/GHCR + Caddy), wire real webhook
   sources (Home Assistant, CI, cron, the daily dashboard push).
-- Battery discharge-curve calibration (the LiPo voltage→% curve is rough-linear today).
-- **On-screen battery indicator** — draw a small battery glyph + `%` in the **bottom-right**
-  corner of the panel (currently free space on every layout). Best as a global overlay in
-  `render.draw_to_epd` after the layout renders, fed `pct` + `on_battery` (both already read in
-  `main.read_battery` via the INA219 shunt-sign). **Show both states:** battery-level glyph + `%`
-  when on battery; a charging/plug glyph when wired. On the tri-color panel, render **red** when
-  low. Appears on all 5 layouts.
 - **Text-fit guardrails (display can't overflow).** `render.py` already `clip()`/`wrap()`s most
   fields, but the **scale-2 headers are drawn raw** — `status_card` `title` + status badge, and
   `alert` `label` — so a long header runs off the right edge (Hermes hit this). Fix: a
@@ -114,12 +112,8 @@ offers event-delete to clear a stuck screen.
   incl. headers; add a test asserting no field exceeds its box. Render-side clip is the
   guarantee; optional secondary: per-field max-length in `schema.py` so a webhook sender gets a
   `422` instead of a silently-truncated screen.
-- **Disable the UPS-B power-on LED** (battery saver). Investigate: the Pico-UPS-B's green
-  power/charge LED is likely **hardware-only** (no GPIO) → physical removal; the Pico's *onboard*
-  LED is SW-controllable (`Pin("LED")` via CYW43) and already off. Check the Waveshare wiki before
-  assuming a code fix.
-- **Richer event history in the UI** — per webhook, show the **raw payload sent** + the
-  **rendered display** (the resolved screen / ePaper preview) for each ingested event, not just a
-  one-line summary. Needs the bridge to retain recent event bodies (it stores events already;
-  expose body + resolved-layout via an admin endpoint) and a dashboard history view with the
-  preview canvas reused from the device cards.
+- **Disable the UPS-B power-on LED — investigated: not software-controllable.** The Pico-UPS-B's
+  green PWR LED is wired to the boost-converter output through a resistor, not to any Pico GPIO
+  (the INA219 is the only device on the I2C bus), so firmware can't switch it off. To kill its
+  ~1–2 mA draw, physically remove the LED or its series resistor. The Pico's *onboard* LED is the
+  only SW-controllable one and is already dark in deepsleep. No code change possible.

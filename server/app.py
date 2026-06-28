@@ -829,6 +829,7 @@ def create_app(
                     "channel": e.channel,
                     "ttl_seconds": e.ttl_seconds,
                     "layout": e.layout,
+                    "content": e.content,
                     "received_at": e.received_at,
                     "expires_at": expires_at,
                     "expired": (False if permanent else now >= expires_at),

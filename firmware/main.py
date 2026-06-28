@@ -136,7 +136,8 @@ def read_battery():
         import ina219
         sensor = ina219.INA219.from_config(config.BATTERY)
         v = sensor.bus_voltage()
-        pct = ina219.voltage_to_pct(v, config.BATTERY["v_min"], config.BATTERY["v_max"])
+        curve = config.BATTERY.get("curve") or getattr(ina219, "DEFAULT_LIPO_CURVE", None)
+        pct = ina219.voltage_to_pct(v, config.BATTERY["v_min"], config.BATTERY["v_max"], curve)
         low = ina219.is_low(pct, config.BATTERY["low_pct"])
         sh = sensor.shunt_mv()
         on_batt = ina219.is_on_battery(sh, config.BATTERY.get("charge_sign", 1),
@@ -251,7 +252,10 @@ def cycle(panel, last_etag, interval_pref):
     action = result["action"]
     if action == "render":
         screen = result["screen"] or {}
-        panel.draw(render.draw_to_epd, screen.get("layout"), screen.get("content") or {})
+        # battery badge overlaid bottom-right (low is False on this path -- a low
+        # battery short-circuits to the dedicated screen above).
+        panel.draw(render.draw_to_epd, screen.get("layout"),
+                   screen.get("content") or {}, (pct, on_battery, low))
         new = result["etag"] or ""
         save_etag(new)
         print("rendered:", screen.get("layout"), "etag", new[:12], "interval", new_pref)

@@ -126,6 +126,14 @@ BATTERY = {
     "v_min":    3.0,              # volts at 0%  (LiPo rough-linear; calibrate per cell)
     "v_max":    4.2,              # volts at 100%
     "low_pct":  15,               # <= this -> low-battery screen + LOW_BATT_INTERVAL_S
+    # Voltage->% discharge curve: ascending (volts, pct) points, piecewise-linear.
+    # The calibration knob -- a real LiPo curve is flat in the middle, so the linear
+    # v_min..v_max map reads badly there. Measure your pack's resting voltage at known
+    # charge levels and tune. Remove this key to fall back to the linear map.
+    "curve": [
+        [3.30, 0], [3.45, 5], [3.60, 10], [3.70, 20], [3.75, 30], [3.79, 40],
+        [3.83, 50], [3.87, 60], [3.92, 70], [3.97, 80], [4.05, 90], [4.20, 100],
+    ],
     # Power-source detection (auto deepsleep). The shunt sign tells charge vs
     # discharge; flip charge_sign to -1 if detection reads backwards on your board
     # (plugged shows "BATTERY"). threshold ignores near-zero noise.

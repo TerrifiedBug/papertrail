@@ -100,10 +100,47 @@ def test_battery_curve():
     assert ina219.voltage_to_pct(3.66, vmin, vmax) == 55, "0.55 -> 55%"
     # degenerate config guard
     assert ina219.voltage_to_pct(3.6, 4.0, 4.0) == 0, "v_max<=v_min guarded"
+    # piecewise-linear curve path (overrides the v_min/v_max linear map)
+    curve = ina219.DEFAULT_LIPO_CURVE
+    assert ina219.voltage_to_pct(4.20, vmin, vmax, curve) == 100, "curve top -> 100"
+    assert ina219.voltage_to_pct(3.30, vmin, vmax, curve) == 0, "curve floor -> 0"
+    assert ina219.voltage_to_pct(2.0, vmin, vmax, curve) == 0, "below curve -> floor"
+    assert ina219.voltage_to_pct(5.0, vmin, vmax, curve) == 100, "above curve -> top"
+    assert ina219.voltage_to_pct(3.83, vmin, vmax, curve) == 50, "curve knee -> 50"
+    assert ina219.voltage_to_pct(3.85, vmin, vmax, curve) == 55, "interp 3.85 -> 55"
+    assert ina219.voltage_to_pct(3.5, vmin, vmax, ((3.0, 0), (4.0, 100))) == 50, "2pt midpoint"
     # low threshold
     assert ina219.is_low(15, 15) is True, "at threshold is low"
     assert ina219.is_low(10, 15) is True, "below threshold is low"
     assert ina219.is_low(16, 15) is False, "above threshold not low"
+
+
+def test_draw_battery():
+    # on battery, mid charge -> percent number + glyph, no '+' prefix
+    c = RecordingCanvas(); c.red = c
+    render.draw_battery(c, 50, True)
+    assert c.has_text("50", color=INK), "shows the percent number"
+    assert not c.has_text("+50"), "no '+' when on battery"
+    assert any(o[0] == "rect" for o in c.ops), "draws a glyph rect"
+    # wired -> '+' prefix as a charging cue
+    cw = RecordingCanvas(); cw.red = cw
+    render.draw_battery(cw, 80, False)
+    assert cw.has_text("+80", color=INK), "'+' prefix when wired"
+    # None pct -> nothing drawn
+    cn = RecordingCanvas(); cn.red = cn
+    render.draw_battery(cn, None, True)
+    assert cn.ops == [], "no pct -> no draw"
+    # fill width tracks charge: 100% -> full bar, 0% -> no bar
+    cf = RecordingCanvas(); cf.red = cf
+    render.draw_battery(cf, 100, True)
+    assert cf.has_rect(228, 113, 14, 5, INK, True), "100% -> full fill bar"
+    ce = RecordingCanvas(); ce.red = ce
+    render.draw_battery(ce, 0, True)
+    assert not any(o[0] == "rect" and o[1] == 228 and o[2] == 113 for o in ce.ops), "0% -> no fill bar"
+    # low -> drawn on the red plane (here red aliases the same recorder)
+    cl = RecordingCanvas(); cl.red = cl
+    render.draw_battery(cl, 40, True, low=True)
+    assert cl.has_text("40", color=INK), "low badge still renders"
 
 
 def test_on_battery_detection():
@@ -476,6 +513,7 @@ def test_ota_crash_loop():
 
 TESTS = [
     test_battery_curve,
+    test_draw_battery,
     test_etag_decision,
     test_poll_interval_clamp,
     test_schema_version_guard,
