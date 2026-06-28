@@ -140,12 +140,34 @@ class Store:
 
     # --- lifecycle --------------------------------------------------------------
 
+    # Columns added to a table AFTER its first release. A deployed bridge keeps a
+    # persistent SQLite volume, so `CREATE TABLE IF NOT EXISTS` never adds them to
+    # an already-existing table -- we ALTER each missing one in on startup
+    # (idempotent, PRAGMA-guarded). Names are hardcoded constants, so the ALTER
+    # string is injection-safe.
+    _EVENT_COLUMNS = (("kind", "TEXT NOT NULL DEFAULT 'base'"),)
+    _TELEMETRY_COLUMNS = (
+        ("last_seen_at", "INTEGER"),
+        ("last_batt", "INTEGER"),
+        ("last_rssi", "INTEGER"),
+        ("last_fw", "TEXT"),
+        ("last_uptime", "INTEGER"),
+    )
+
     def init_db(self) -> None:
-        """Create tables + index if missing. Safe to call on every startup.
-        Greenfield: the CREATE TABLE statements are the single source of truth
-        (no post-v1 ALTER migrations)."""
+        """Create tables + index if missing, then migrate an existing DB by adding
+        any columns introduced after a table's first release. Safe on every startup."""
         with self._conn() as conn:
             conn.executescript(_SCHEMA_SQL)
+            self._add_columns(conn, "events", self._EVENT_COLUMNS)
+            self._add_columns(conn, "devices", self._TELEMETRY_COLUMNS)
+
+    @staticmethod
+    def _add_columns(conn, table, columns):
+        have = {r["name"] for r in conn.execute("PRAGMA table_info(%s)" % table)}
+        for name, decl in columns:
+            if name not in have:
+                conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, name, decl))
 
     def is_seeded(self) -> bool:
         with self._conn() as conn:
