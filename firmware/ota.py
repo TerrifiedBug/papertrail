@@ -208,15 +208,38 @@ def _get_manifest(base_url, token):
         _safe_close(resp)
 
 
-def _get_file(base_url, token, path):
-    # `path` is a manifest key the bridge re-validates; '/' in the query value is
-    # legal and the stock bridge accepts it (no traversal: server checks membership).
+def _download_verified(base_url, token, path, expected_sha, dest):
+    """STREAM a file to `dest`, hashing as we go -- never hold the whole file in RAM
+    (a big file via resp.content can MemoryError on the Pico's fragmented heap; the
+    web flasher hit the same class of bug). `Connection: close` makes the server EOF
+    after the body so a chunked read of resp.raw terminates cleanly. On a sha
+    mismatch the partial `dest` is removed and we raise. `path` is a manifest key the
+    bridge re-validates (membership check, no traversal)."""
     url = base_url + _FILE_PATH + "?path=" + path
-    resp = urequests.get(url, headers=_auth(token))
+    headers = _auth(token)
+    headers["Connection"] = "close"
+    resp = urequests.get(url, headers=headers)
     try:
         if resp.status_code != 200:
             raise OTAError("file http " + str(resp.status_code) + " for " + path)
-        return resp.content                 # raw bytes
+        h = hashlib.sha256()
+        _ensure_parent(dest)
+        f = open(dest, "wb")
+        try:
+            while True:
+                chunk = resp.raw.read(512)
+                if not chunk:
+                    break
+                h.update(chunk)
+                f.write(chunk)
+        finally:
+            f.close()
+        if _hexlify(h.digest()) != str(expected_sha or "").lower():
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            raise OTAError("sha mismatch: " + path)
     finally:
         _safe_close(resp)
 
@@ -418,12 +441,8 @@ def apply(base_url, token):
     staged = []
     try:
         for path in to_pull:
-            data = _get_file(base_url, token, path)
-            if not verify(data, server_files.get(path)):
-                raise OTAError("sha mismatch: " + path)
             tmp = path + ".new"
-            _ensure_parent(tmp)
-            _write_bytes(tmp, data)
+            _download_verified(base_url, token, path, server_files.get(path), tmp)
             staged.append((tmp, path))
     except Exception:
         _cleanup_staged(staged)
