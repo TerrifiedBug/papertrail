@@ -64,7 +64,9 @@ Resolution = **newest live interrupt → newest base → fallback**. There is no
 
 ## Layouts + `content` shapes
 
-The 8×8 font is **ASCII-only**; the listed caps are render limits — pre-trim or text clips.
+The 8×8 font is **ASCII-only**: non-ASCII is sanitized at render (common typography like
+`°` `—` `'` `"` `…` maps to ASCII or is dropped — e.g. `"19°C"` shows as `"19C"`), so prefer
+plain ASCII. The listed caps are render limits — pre-trim or text clips.
 `base` examples omit `ttl_seconds` (ignored); `interrupt` examples include it.
 
 ### `status_card` — heading + status word + body lines

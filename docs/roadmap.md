@@ -105,13 +105,12 @@ offers event-delete to clear a stuck screen.
 - Per-event render hints (`invert`, `full_refresh`).
 - Productionize: deploy the bridge on the homelab (Docker/GHCR + Caddy), wire real webhook
   sources (Home Assistant, CI, cron, the daily dashboard push).
-- **Text-fit guardrails (display can't overflow).** `render.py` already `clip()`/`wrap()`s most
-  fields, but the **scale-2 headers are drawn raw** — `status_card` `title` + status badge, and
-  `alert` `label` — so a long header runs off the right edge (Hermes hit this). Fix: a
-  scale-aware clip (`max_chars = (W - x - PAD) // (8*scale)`) applied to every dynamic string,
-  incl. headers; add a test asserting no field exceeds its box. Render-side clip is the
-  guarantee; optional secondary: per-field max-length in `schema.py` so a webhook sender gets a
-  `422` instead of a silently-truncated screen.
+- **Text-fit guardrails — DONE.** Every field is bounded: single-line fields `clip()` with an
+  ellipsis, scale-2 headers are clipped to their box (`status_card`/`alert` titles), and
+  `status_card` `lines` + `alert` messages **word-wrap** into their row budget — a long line
+  spills onto the next row instead of clipping (firmware `render.py` + the admin preview kept in
+  sync). Render-side fit is the guarantee; a per-field `422` in `schema.py` for early sender
+  feedback remains an optional nicety, not needed for correctness.
 - **Disable the UPS-B power-on LED — investigated: not software-controllable.** The Pico-UPS-B's
   green PWR LED is wired to the boost-converter output through a resistor, not to any Pico GPIO
   (the INA219 is the only device on the I2C bus), so firmware can't switch it off. To kill its

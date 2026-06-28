@@ -26,10 +26,39 @@ except ImportError:                         # host / tests
 # --------------------------------------------------------------------------
 # Pure text-fitting helpers (ASCII-only; the 8x8 font has no ellipsis glyph)
 # --------------------------------------------------------------------------
+
+# The built-in 8x8 font renders ASCII 0x20..0x7e only. Map common non-ASCII
+# typography to ASCII and DROP anything else, so a stray byte (e.g. the degree
+# sign in "19°C") can't render as garbage on the panel. PURE.
+_ASCII_MAP = {
+    "°": "",                       # degree -> drop: "19°C" -> "19C"
+    "–": "-", "—": "-",        # en/em dash
+    "‘": "'", "’": "'",        # smart single quotes
+    "“": '"', "”": '"',        # smart double quotes
+    "…": "...",                     # ellipsis
+    "×": "x", "µ": "u",        # multiply, micro
+    "£": "GBP", "€": "EUR",    # currency the font lacks
+}
+
+
+def _ascii(s):
+    if s is None:
+        return ""
+    out = []
+    for ch in str(s):
+        o = ord(ch)
+        if 0x20 <= o <= 0x7e:
+            out.append(ch)
+        elif ch in _ASCII_MAP:
+            out.append(_ASCII_MAP[ch])
+        # else: non-renderable -> dropped
+    return "".join(out)
+
+
 def clip(s, n):
     """Fit to a single line of n chars. If truncated, the last 3 kept chars
-    become '...' (when n > 3); if n <= 3, hard cut."""
-    s = "" if s is None else str(s)
+    become '...' (when n > 3); if n <= 3, hard cut. Non-ASCII is sanitized."""
+    s = _ascii(s)
     if len(s) <= n:
         return s
     if n <= 3:
@@ -40,8 +69,8 @@ def clip(s, n):
 def wrap(s, n, l):
     """Greedy word-wrap to width n, at most l lines. Words longer than n are
     hard-split. If content overflows l lines, the last shown line is clipped
-    with a trailing '...'."""
-    s = "" if s is None else str(s)
+    with a trailing '...'. Non-ASCII is sanitized."""
+    s = _ascii(s)
 
     # Tokenise on spaces, hard-splitting any word wider than n.
     tokens = []
@@ -98,8 +127,16 @@ def render_status_card(canvas, content):
     canvas.text(status, 246 - 8 * len(status), 6, INK, 1)  # S1 right-aligned badge
     canvas.hline(20)
     canvas.text(clip(_s(content, "subtitle"), 30), 4, 25, INK, 1)
-    for i, line in enumerate(_list(content, "lines")[:5]):  # rows y=40,51,62,73,84
-        canvas.text(clip(line, 30), 4, 40 + 11 * i, INK, 1)
+    # Wrap each body line to the panel width, flowing into the 5-row budget, so a
+    # long line spills onto the next row instead of clipping with "..." (a line
+    # that overflows the remaining budget still clips on its last shown row).
+    rows = []
+    for line in _list(content, "lines"):
+        if len(rows) >= 5:
+            break
+        rows.extend(wrap(line, 30, 5 - len(rows)))
+    for i, row in enumerate(rows[:5]):                      # body rows y=40,51,62,73,84
+        canvas.text(row, 4, 40 + 11 * i, INK, 1)
     canvas.hline(100)
     canvas.text(clip(_s(content, "footer"), 30), 4, 110, INK, 1)
 

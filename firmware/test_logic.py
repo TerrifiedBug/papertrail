@@ -303,6 +303,34 @@ def test_status_card_fields():
     assert c.ops[0] == ("fill", PAPER), "frame cleared to PAPER"
 
 
+def test_status_card_wraps_long_lines():
+    c = RecordingCanvas()
+    render.render_status_card(c, {
+        "title": "T", "status": "OK", "subtitle": "",
+        # 32-char line must WRAP across two body rows, not clip with "..."
+        "lines": ["Weather 19C clear, H22, rain 82%", "Calendar clear"],
+        "footer": "",
+    })
+    body = [o for o in c.texts() if o[2] == 4 and o[3] in (40, 51, 62, 73, 84)]
+    shown = " ".join(o[1] for o in body)
+    assert "rain 82%" in shown, "long line wrapped -> full text shown"
+    assert "..." not in shown, "no ellipsis when it fits the 5-row budget"
+    assert any(o[1] == "Calendar clear" for o in body), "next line still shown after the wrap"
+
+
+def test_ascii_sanitizes_non_renderable():
+    # the reported bug: the 8x8 font can't render the degree sign -> drop it
+    assert render.clip("19°C", 30) == "19C", "degree dropped -> 19C"
+    # common typography mapped to ASCII
+    assert render.clip("it’s “warm”", 30) == 'it\'s "warm"', "smart quotes -> ascii"
+    assert render.clip("a — b …", 30) == "a - b ...", "em-dash + ellipsis"
+    # unknown non-ASCII (emoji) dropped, never garbage
+    assert render.clip("hi \U0001F600 x", 30) == "hi  x", "emoji dropped"
+    # wrap sanitizes too: nothing non-ASCII reaches the font
+    joined = "".join(render.wrap("temp 19°C now", 30, 2))
+    assert all(0x20 <= ord(ch) <= 0x7e for ch in joined), "wrap output is pure ASCII"
+
+
 def test_metric_centering():
     c = RecordingCanvas()
     render.render_metric(c, {
@@ -525,7 +553,9 @@ TESTS = [
     test_ota_crash_loop,
     test_clip,
     test_wrap,
+    test_ascii_sanitizes_non_renderable,
     test_status_card_fields,
+    test_status_card_wraps_long_lines,
     test_metric_centering,
     test_list_fields,
     test_alert_high_inversion,
