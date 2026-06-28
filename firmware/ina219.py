@@ -33,12 +33,35 @@ def _clamp(lo, hi, v):
     return v
 
 
-def voltage_to_pct(v_bus, v_min, v_max):
-    """LiPo bus-voltage -> integer 0..100%, rough-linear, clamped.
+# Typical single-cell LiPo discharge curve (resting / light load): ascending
+# (volts, pct) points. Piecewise-linear between them, clamped at the ends. Only a
+# default -- config.BATTERY["curve"] overrides it for per-pack calibration.
+DEFAULT_LIPO_CURVE = (
+    (3.30, 0), (3.45, 5), (3.60, 10), (3.70, 20), (3.75, 30), (3.79, 40),
+    (3.83, 50), (3.87, 60), (3.92, 70), (3.97, 80), (4.05, 90), (4.20, 100),
+)
 
-    pct = clamp(0, 100, round((v - v_min) / (v_max - v_min) * 100))
-    Below v_min -> 0, above v_max -> 100. PURE (host-testable).
+
+def voltage_to_pct(v_bus, v_min, v_max, curve=None):
+    """LiPo bus-voltage -> integer 0..100%, clamped. PURE (host-testable).
+
+    With `curve` (an ascending sequence of (volts, pct) points) the mapping follows
+    the real LiPo discharge curve by piecewise-linear interpolation: below the first
+    point -> its pct, above the last -> its pct. Without a curve it falls back to the
+    old rough-linear map between v_min and v_max.
     """
+    if curve:
+        if v_bus <= curve[0][0]:
+            return int(curve[0][1])
+        if v_bus >= curve[-1][0]:
+            return int(curve[-1][1])
+        for i in range(1, len(curve)):
+            v1, p1 = curve[i]
+            if v_bus <= v1:
+                v0, p0 = curve[i - 1]
+                frac = (v_bus - v0) / (v1 - v0) if v1 != v0 else 0
+                return int(_clamp(0, 100, round(p0 + frac * (p1 - p0))))
+        return int(curve[-1][1])            # unreachable; belt-and-braces
     if v_max <= v_min:                      # guard against a bad config
         return 0
     frac = (v_bus - v_min) / (v_max - v_min)

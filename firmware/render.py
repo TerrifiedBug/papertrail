@@ -319,9 +319,33 @@ def _push(epd):
         epd.display(epd.buffer)                  # mono
 
 
-def draw_to_epd(epd, layout, content):
-    """Render a resolved screen into the epd plane(s) and push it."""
-    render(_prep(epd), layout, content)
+def draw_battery(canvas, pct, on_battery, low=False):
+    """Bottom-right battery badge: charge % + a level-filled glyph; a '+' prefix
+    when wired/charging; drawn on the red plane when low (tri-color)."""
+    if pct is None:
+        return
+    pct = 0 if pct < 0 else 100 if pct > 100 else int(pct)
+    plane = canvas.red if low else canvas
+    # Seat on a cleared (PAPER) patch so a long footer's tail doesn't bleed through.
+    # ponytail: the badge owns the bottom-right corner -- a >22-char footer loses its
+    # tail there, and on `alert` it overlays the red frame. Acceptable for v1.
+    canvas.rect(188, 109, 62, 13, PAPER, True)
+    label = ("+" if not on_battery else "") + str(pct)
+    plane.text(label, 222 - 8 * len(label), 112, INK, 1)
+    plane.rect(226, 111, 18, 9, INK)            # body outline
+    plane.rect(244, 114, 2, 3, INK, True)       # nub
+    fillw = int(round(pct / 100.0 * 14))
+    if fillw > 0:
+        plane.rect(228, 113, fillw, 5, INK, True)
+
+
+def draw_to_epd(epd, layout, content, batt=None):
+    """Render a resolved screen into the epd plane(s) and push it. `batt`, when
+    given, is (pct, on_battery, low) and overlays a battery badge bottom-right."""
+    canvas = _prep(epd)
+    render(canvas, layout, content)
+    if batt is not None and batt[0] is not None:
+        draw_battery(canvas, batt[0], batt[1], batt[2] if len(batt) > 2 else False)
     _push(epd)
 
 

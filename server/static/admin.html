@@ -163,6 +163,17 @@
   .row-title{font-weight:700;word-break:break-all;}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
 
+  /* --- expandable event detail -------------------------------------------- */
+  .row-main.expandable{cursor:pointer;}
+  .caret{display:inline-block;width:12px;color:var(--muted);font-size:11px;transition:transform .12s ease;}
+  .event-detail{padding:8px 0 12px;border-bottom:1px solid var(--rule);}
+  .event-detail .epaper{max-width:250px;}
+  pre.mono{
+    background:var(--paper);border:1px solid var(--rule);border-radius:8px;
+    padding:10px;font-size:12px;line-height:1.45;white-space:pre-wrap;
+    word-break:break-word;overflow:auto;max-height:260px;margin:4px 0 0;
+  }
+
   /* --- modal --------------------------------------------------------------- */
   .modal-overlay{
     position:fixed;inset:0;background:rgba(17,17,17,.42);
@@ -933,11 +944,38 @@ async function loadEventList(d, listWrap) {
       el("span", { class: "tag" + (ev.expired ? " tag-danger" : ""),
         text: ev.expired ? "expired" : (ev.expires_at == null ? "permanent" : inFromNow(ev.expires_at)) })
     );
-    const main = el("div", { class: "row-main" },
-      el("div", { class: "row-title mono", text: ev.id }),
+    const caret = el("span", { class: "caret", text: "▸" });
+    const main = el("div", { class: "row-main expandable", title: "Click to show payload + preview" },
+      el("div", { class: "row-title mono" }, caret, document.createTextNode(" " + ev.id)),
       el("div", { class: "meta", text: "received " + relTime(ev.received_at) + " · " + (ev.ttl_seconds && ev.ttl_seconds > 0 ? "ttl " + ev.ttl_seconds + "s" : "no expiry") }),
       tags
     );
+
+    // Lazily-built detail panel: ePaper preview + pretty-printed payload. The
+    // preview canvas is only drawn the first time the row is expanded, so we
+    // don't render N canvases up front.
+    const detail = el("div", { class: "event-detail", style: "display:none;" });
+    let built = false;
+    main.addEventListener("click", function () {
+      const open = detail.style.display === "none";
+      detail.style.display = open ? "" : "none";
+      caret.textContent = open ? "▾" : "▸";
+      if (open && !built) {
+        built = true;
+        const canvas = el("canvas", { class: "epaper", width: "500", height: "244" });
+        renderPreview(canvas, ev.layout, ev.content || {});
+        // XSS-safe: payload is shown via textContent, never innerHTML.
+        const pre = el("pre", { class: "mono" });
+        pre.textContent = JSON.stringify({ layout: ev.layout, content: ev.content }, null, 2);
+        detail.replaceChildren(
+          el("div", { class: "kicker", text: "ePaper preview" }),
+          canvas,
+          el("div", { class: "kicker", text: "payload" }),
+          pre
+        );
+      }
+    });
+
     const delBtn = el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Delete" });
     delBtn.addEventListener("click", async function () {
       delBtn.disabled = true;
@@ -948,7 +986,7 @@ async function loadEventList(d, listWrap) {
         loadDashboard(true);
       } catch (e) { handleApiError(e, "Delete event"); delBtn.disabled = false; }
     });
-    container.appendChild(el("div", { class: "row" }, main, delBtn));
+    container.appendChild(el("div", {}, el("div", { class: "row" }, main, delBtn), detail));
   });
   listWrap.replaceChildren(container);
 }
