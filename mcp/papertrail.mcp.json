@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "papertrail": {
+      "command": "python",
+      "args": ["/absolute/path/to/papertrail/mcp/papertrail_mcp.py"],
+      "env": {
+        "PAPERTRAIL_URL": "http://192.168.1.50:8000",
+        "PAPERTRAIL_TOKEN": "your-ingest-token",
+        "PAPERTRAIL_ADMIN_TOKEN": "optional-admin-token"
+      }
+    }
+  }
+}

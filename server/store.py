@@ -69,6 +69,14 @@ class DeviceRow:
     last_rssi: Optional[int] = None
     last_fw: Optional[str] = None
     last_uptime: Optional[int] = None
+    # Quiet hours (server-evaluated wall-clock window; the bridge stretches the
+    # device's poll_interval inside it, so the clock-less Pico needs no change).
+    quiet_start_h: Optional[int] = None
+    quiet_end_h: Optional[int] = None
+    # One-shot control action (reboot / clear / force_full_refresh) + a monotonic
+    # token the device echoes back to ack, so the bridge fires it exactly once.
+    pending_action: Optional[str] = None
+    action_token: int = 0
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,11 @@ class EventRow:
 
 
 _SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tokens (
   id           INTEGER PRIMARY KEY,
   token_sha256 TEXT NOT NULL UNIQUE,
@@ -105,7 +118,11 @@ CREATE TABLE IF NOT EXISTS devices (
   last_batt           INTEGER,
   last_rssi           INTEGER,
   last_fw             TEXT,
-  last_uptime         INTEGER
+  last_uptime         INTEGER,
+  quiet_start_h       INTEGER,
+  quiet_end_h         INTEGER,
+  pending_action      TEXT,
+  action_token        INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -121,7 +138,20 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_device ON events(device, channel, received_at);
+
+CREATE TABLE IF NOT EXISTS battery_samples (
+  device     TEXT NOT NULL,
+  at         INTEGER NOT NULL,
+  pct        INTEGER NOT NULL,
+  on_battery INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_battery_device_at ON battery_samples(device, at);
 """
+
+# Bumped when the schema changes; stamped into meta(schema_version) by init_db so
+# diagnostics + future ordered migrations can read it. v1 = original; v2 = events.kind
+# added + obsolete priority dropped; v3 = meta + battery_samples + device quiet-hours.
+SCHEMA_VERSION = 3
 
 
 class Store:
@@ -158,17 +188,29 @@ class Store:
     # INSERT omits it, so leaving it makes every insert fail the NOT NULL constraint
     # (silently, via INSERT OR IGNORE -> looks like a dedup). SQLite 3.35+ (the 3.11
     # image ships it) supports DROP COLUMN; on an older engine we leave it + log.
+    _DEVICE_V3_COLUMNS = (
+        ("quiet_start_h", "INTEGER"),
+        ("quiet_end_h", "INTEGER"),
+        ("pending_action", "TEXT"),
+        ("action_token", "INTEGER NOT NULL DEFAULT 0"),
+    )
     _OBSOLETE_COLUMNS = (("events", "priority"),)
 
     def init_db(self) -> None:
         """Create tables + index if missing, then migrate an existing DB: add columns
-        introduced after a table's first release, drop columns since removed. Safe on
-        every startup."""
+        introduced after a table's first release, drop columns since removed, and stamp
+        the schema version into meta. Safe on every startup."""
         with self._conn() as conn:
             conn.executescript(_SCHEMA_SQL)
             self._add_columns(conn, "events", self._EVENT_COLUMNS)
             self._add_columns(conn, "devices", self._TELEMETRY_COLUMNS)
+            self._add_columns(conn, "devices", self._DEVICE_V3_COLUMNS)
             self._drop_columns(conn, self._OBSOLETE_COLUMNS)
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', ?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(SCHEMA_VERSION),),
+            )
 
     @staticmethod
     def _add_columns(conn, table, columns):
@@ -186,6 +228,21 @@ class Store:
                     conn.execute("ALTER TABLE %s DROP COLUMN %s" % (table, name))
                 except sqlite3.OperationalError as e:
                     print("init_db: could not drop obsolete %s.%s (%s)" % (table, name, e))
+
+    # --- meta (schema version + small key/value state) --------------------------
+
+    def get_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_meta(self, key: str, value: Any) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES(?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)),
+            )
 
     def is_seeded(self) -> bool:
         with self._conn() as conn:
@@ -261,28 +318,38 @@ class Store:
 
     # --- devices ----------------------------------------------------------------
 
+    _DEVICE_COLS = (
+        "id, channels, fallback, poll_interval_s, low_batt_interval_s,"
+        " last_seen_at, last_batt, last_rssi, last_fw, last_uptime,"
+        " quiet_start_h, quiet_end_h, pending_action, action_token"
+    )
+
+    @staticmethod
+    def _device_from_row(r) -> DeviceRow:
+        return DeviceRow(
+            id=r["id"],
+            channels=json.loads(r["channels"]),
+            fallback=json.loads(r["fallback"]),
+            poll_interval_s=r["poll_interval_s"],
+            low_batt_interval_s=r["low_batt_interval_s"],
+            last_seen_at=r["last_seen_at"],
+            last_batt=r["last_batt"],
+            last_rssi=r["last_rssi"],
+            last_fw=r["last_fw"],
+            last_uptime=r["last_uptime"],
+            quiet_start_h=r["quiet_start_h"],
+            quiet_end_h=r["quiet_end_h"],
+            pending_action=r["pending_action"],
+            action_token=r["action_token"] if r["action_token"] is not None else 0,
+        )
+
     def get_device(self, device_id: str) -> Optional[DeviceRow]:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT id, channels, fallback, poll_interval_s, low_batt_interval_s,"
-                " last_seen_at, last_batt, last_rssi, last_fw, last_uptime"
-                " FROM devices WHERE id = ?",
+                "SELECT " + self._DEVICE_COLS + " FROM devices WHERE id = ?",
                 (device_id,),
             ).fetchone()
-        if row is None:
-            return None
-        return DeviceRow(
-            id=row["id"],
-            channels=json.loads(row["channels"]),
-            fallback=json.loads(row["fallback"]),
-            poll_interval_s=row["poll_interval_s"],
-            low_batt_interval_s=row["low_batt_interval_s"],
-            last_seen_at=row["last_seen_at"],
-            last_batt=row["last_batt"],
-            last_rssi=row["last_rssi"],
-            last_fw=row["last_fw"],
-            last_uptime=row["last_uptime"],
-        )
+        return self._device_from_row(row) if row else None
 
     def set_poll_interval(self, device_id: str, poll_interval_s: int) -> None:
         """Persist a remote deep-sleep interval change (already clamped by caller)."""
@@ -315,31 +382,83 @@ class Store:
                 (last_seen_at, last_batt, last_rssi, last_fw, last_uptime, device_id),
             )
 
+    # --- battery history, quiet hours, one-shot actions, diagnostics -----------
+
+    def record_battery_sample(self, device_id: str, at: int, pct: Optional[int],
+                              on_battery: bool = True, keep: int = 1000) -> None:
+        """Append a battery reading + prune to the newest ``keep`` per device."""
+        if pct is None:
+            return
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO battery_samples(device, at, pct, on_battery) VALUES(?,?,?,?)",
+                (device_id, int(at), int(pct), 1 if on_battery else 0),
+            )
+            conn.execute(
+                "DELETE FROM battery_samples WHERE device = ? AND rowid NOT IN ("
+                " SELECT rowid FROM battery_samples WHERE device = ? ORDER BY at DESC LIMIT ?)",
+                (device_id, device_id, int(keep)),
+            )
+
+    def battery_series(self, device_id: str, limit: int = 200) -> list[tuple]:
+        """Recent (at, pct, on_battery) samples, OLDEST first (for a sparkline)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT at, pct, on_battery FROM battery_samples WHERE device = ?"
+                " ORDER BY at DESC LIMIT ?",
+                (device_id, int(limit)),
+            ).fetchall()
+        return [(r["at"], r["pct"], bool(r["on_battery"])) for r in reversed(rows)]
+
+    def set_quiet_hours(self, device_id: str, start_h: Optional[int],
+                        end_h: Optional[int]) -> None:
+        """Set/clear the quiet-hours window (None, None clears). Hours are 0..23."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE devices SET quiet_start_h = ?, quiet_end_h = ? WHERE id = ?",
+                (start_h, end_h, device_id),
+            )
+
+    def set_pending_action(self, device_id: str, action: str) -> int:
+        """Queue a one-shot action; bumps action_token so the device runs it once.
+        Returns the new token."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE devices SET pending_action = ?, action_token = action_token + 1"
+                " WHERE id = ?",
+                (action, device_id),
+            )
+            row = conn.execute(
+                "SELECT action_token FROM devices WHERE id = ?", (device_id,)
+            ).fetchone()
+            return row["action_token"] if row else 0
+
+    def clear_action(self, device_id: str, token: int) -> None:
+        """Clear the pending action iff the device acked the matching token."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE devices SET pending_action = NULL"
+                " WHERE id = ? AND action_token = ?",
+                (device_id, int(token)),
+            )
+
+    def counts(self) -> dict[str, int]:
+        """Row counts per table, for diagnostics."""
+        with self._conn() as conn:
+            return {
+                t: conn.execute("SELECT COUNT(*) AS n FROM %s" % t).fetchone()["n"]
+                for t in ("devices", "events", "tokens", "battery_samples")
+            }
+
     # --- devices: admin mutations ----------------------------------------------
 
     def list_devices(self) -> list[DeviceRow]:
         """All devices (for the admin dashboard), ordered by id."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, channels, fallback, poll_interval_s, low_batt_interval_s,"
-                " last_seen_at, last_batt, last_rssi, last_fw, last_uptime"
-                " FROM devices ORDER BY id"
+                "SELECT " + self._DEVICE_COLS + " FROM devices ORDER BY id"
             ).fetchall()
-        return [
-            DeviceRow(
-                id=r["id"],
-                channels=json.loads(r["channels"]),
-                fallback=json.loads(r["fallback"]),
-                poll_interval_s=r["poll_interval_s"],
-                low_batt_interval_s=r["low_batt_interval_s"],
-                last_seen_at=r["last_seen_at"],
-                last_batt=r["last_batt"],
-                last_rssi=r["last_rssi"],
-                last_fw=r["last_fw"],
-                last_uptime=r["last_uptime"],
-            )
-            for r in rows
-        ]
+        return [self._device_from_row(r) for r in rows]
 
     def add_device(
         self,
@@ -477,27 +596,37 @@ class Store:
     # --- events -----------------------------------------------------------------
 
     def insert_event(self, event: EventRow) -> bool:
-        """Dedup-safe insert. Returns True if stored, False if the id already
-        existed (idempotent no-op; first write wins, never overwrite)."""
+        """Dedup-safe insert. Returns True if stored, False ONLY when the id already
+        exists (idempotent no-op; first write wins). Any OTHER integrity failure
+        (e.g. a NOT NULL violation from schema drift) is re-raised, not silently
+        swallowed -- a bare INSERT OR IGNORE once hid exactly that as a fake dedup."""
         with self._conn() as conn:
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO events"
-                " (id, device, channel, kind, ttl_seconds, layout, content,"
-                "  received_at, raw_size)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    event.id,
-                    event.device,
-                    event.channel,
-                    event.kind,
-                    event.ttl_seconds,
-                    event.layout,
-                    json.dumps(event.content),
-                    event.received_at,
-                    event.raw_size,
-                ),
-            )
-            return cur.rowcount > 0
+            try:
+                conn.execute(
+                    "INSERT INTO events"
+                    " (id, device, channel, kind, ttl_seconds, layout, content,"
+                    "  received_at, raw_size)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        event.id,
+                        event.device,
+                        event.channel,
+                        event.kind,
+                        event.ttl_seconds,
+                        event.layout,
+                        json.dumps(event.content),
+                        event.received_at,
+                        event.raw_size,
+                    ),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                exists = conn.execute(
+                    "SELECT 1 FROM events WHERE id = ?", (event.id,)
+                ).fetchone()
+                if exists:
+                    return False        # genuine dedup: id already present
+                raise                   # NOT a dedup -> surface the real constraint error
 
     def events_for_device(self, device_id: str) -> list[EventRow]:
         with self._conn() as conn:
