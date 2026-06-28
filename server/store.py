@@ -153,14 +153,22 @@ class Store:
         ("last_fw", "TEXT"),
         ("last_uptime", "INTEGER"),
     )
+    # Columns REMOVED after a table's first release -- drop them from an existing DB
+    # so the live schema matches the code. `priority` was `NOT NULL` and the current
+    # INSERT omits it, so leaving it makes every insert fail the NOT NULL constraint
+    # (silently, via INSERT OR IGNORE -> looks like a dedup). SQLite 3.35+ (the 3.11
+    # image ships it) supports DROP COLUMN; on an older engine we leave it + log.
+    _OBSOLETE_COLUMNS = (("events", "priority"),)
 
     def init_db(self) -> None:
-        """Create tables + index if missing, then migrate an existing DB by adding
-        any columns introduced after a table's first release. Safe on every startup."""
+        """Create tables + index if missing, then migrate an existing DB: add columns
+        introduced after a table's first release, drop columns since removed. Safe on
+        every startup."""
         with self._conn() as conn:
             conn.executescript(_SCHEMA_SQL)
             self._add_columns(conn, "events", self._EVENT_COLUMNS)
             self._add_columns(conn, "devices", self._TELEMETRY_COLUMNS)
+            self._drop_columns(conn, self._OBSOLETE_COLUMNS)
 
     @staticmethod
     def _add_columns(conn, table, columns):
@@ -168,6 +176,16 @@ class Store:
         for name, decl in columns:
             if name not in have:
                 conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, name, decl))
+
+    @staticmethod
+    def _drop_columns(conn, table_columns):
+        for table, name in table_columns:
+            have = {r["name"] for r in conn.execute("PRAGMA table_info(%s)" % table)}
+            if name in have:
+                try:
+                    conn.execute("ALTER TABLE %s DROP COLUMN %s" % (table, name))
+                except sqlite3.OperationalError as e:
+                    print("init_db: could not drop obsolete %s.%s (%s)" % (table, name, e))
 
     def is_seeded(self) -> bool:
         with self._conn() as conn:

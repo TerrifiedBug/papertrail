@@ -50,6 +50,19 @@ def test_init_db_migrates_existing_db(tmp_path):
     cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(devices)")}
     assert {"last_seen_at", "last_batt", "last_rssi", "last_fw", "last_uptime"} <= cols
 
-    # idempotent: a second init_db is a no-op (columns already present)
+    # the obsolete NOT NULL `priority` column is DROPPED, so a current-shape INSERT
+    # (which omits priority) succeeds instead of silently failing the constraint and
+    # being swallowed by INSERT OR IGNORE -- the prod "events don't store" bug.
+    ev_cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(events)")}
+    assert "priority" not in ev_cols, "obsolete priority column dropped"
+    from server.store import EventRow
+    stored = store.insert_event(EventRow(
+        id="new1", device="kitchen-01", channel="home.status", ttl_seconds=0,
+        layout="status_card", content={"title": "x"}, received_at=2000, raw_size=10, kind="base",
+    ))
+    assert stored is True, "insert succeeds after the obsolete column is dropped"
+    assert len(store.events_for_device("kitchen-01")) == 2
+
+    # idempotent: a second init_db is a no-op (columns already migrated)
     store.init_db()
-    assert len(store.events_for_device("kitchen-01")) == 1
+    assert len(store.events_for_device("kitchen-01")) == 2
