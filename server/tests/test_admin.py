@@ -438,3 +438,12 @@ def test_diag_endpoint(admin_ctx):
     assert d["schema_version"] is not None
     assert "events" in d["counts"] and "devices" in d["counts"]
     assert isinstance(d["devices"], list)
+
+
+def test_battery_series_endpoint(admin_ctx):
+    # a poll carrying batt records a sample
+    admin_ctx.client.get(f"/api/devices/{DEVICE_ID}/current?batt=80", headers=bearer(DEVICE_TOKEN))
+    r = admin_ctx.client.get(f"{DEVICES}/{DEVICE_ID}/battery", headers=admin_bearer()).json()
+    assert isinstance(r["series"], list)
+    assert any(s["pct"] == 80 for s in r["series"])
+    assert "days_remaining" in r
