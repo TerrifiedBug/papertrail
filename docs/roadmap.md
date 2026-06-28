@@ -106,5 +106,23 @@ same commit as the admin GUI.
 - Battery discharge-curve calibration (the LiPo voltage→% curve is rough-linear today).
 - **On-screen battery indicator** — draw a small battery glyph + `%` in the **bottom-right**
   corner of the panel (currently free space on every layout). Best as a global overlay in
-  `render.draw_to_epd` after the layout renders, fed the `pct` already read in `main.read_battery`;
-  on the tri-color panel, render it **red** when low. Appears on all 5 layouts.
+  `render.draw_to_epd` after the layout renders, fed `pct` + `on_battery` (both already read in
+  `main.read_battery` via the INA219 shunt-sign). **Show both states:** battery-level glyph + `%`
+  when on battery; a charging/plug glyph when wired. On the tri-color panel, render **red** when
+  low. Appears on all 5 layouts.
+- **Text-fit guardrails (display can't overflow).** `render.py` already `clip()`/`wrap()`s most
+  fields, but the **scale-2 headers are drawn raw** — `status_card` `title` + status badge, and
+  `alert` `label` — so a long header runs off the right edge (Hermes hit this). Fix: a
+  scale-aware clip (`max_chars = (W - x - PAD) // (8*scale)`) applied to every dynamic string,
+  incl. headers; add a test asserting no field exceeds its box. Render-side clip is the
+  guarantee; optional secondary: per-field max-length in `schema.py` so a webhook sender gets a
+  `422` instead of a silently-truncated screen.
+- **Disable the UPS-B power-on LED** (battery saver). Investigate: the Pico-UPS-B's green
+  power/charge LED is likely **hardware-only** (no GPIO) → physical removal; the Pico's *onboard*
+  LED is SW-controllable (`Pin("LED")` via CYW43) and already off. Check the Waveshare wiki before
+  assuming a code fix.
+- **Richer event history in the UI** — per webhook, show the **raw payload sent** + the
+  **rendered display** (the resolved screen / ePaper preview) for each ingested event, not just a
+  one-line summary. Needs the bridge to retain recent event bodies (it stores events already;
+  expose body + resolved-layout via an admin endpoint) and a dashboard history view with the
+  preview canvas reused from the device cards.
