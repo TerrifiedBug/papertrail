@@ -238,12 +238,54 @@ def render_qr(canvas, content):
         canvas.text(line, 104, 30 + 11 * i, INK, 1)
 
 
+def render_image(canvas, content):
+    """1-bit bitmap: base64 of ceil(w/8)*h bytes, MONO_HLSB (MSB = leftmost pixel,
+    a set bit = INK). Drawn centered below an optional title. Bad/short data -> blank."""
+    canvas.fill(PAPER)
+    title = clip(_s(content, "title"), 30)
+    y0 = 0
+    if title:
+        canvas.text(title, 4, 2, INK, 1)
+        canvas.hline(14)
+        y0 = 18
+    w = content.get("w", 0)
+    h = content.get("h", 0)
+    data = content.get("data", "")
+    if not (isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0 and data):
+        return
+    try:
+        import ubinascii
+        raw = ubinascii.a2b_base64(data)
+    except ImportError:
+        import binascii
+        raw = binascii.a2b_base64(data)
+    except Exception:
+        return
+    stride = (w + 7) // 8
+    if len(raw) < stride * h:
+        return
+    x_off = max(0, (W - w) // 2)
+    y_off = y0 + max(0, (H - y0 - h) // 2)
+    for ry in range(h):
+        oy = y_off + ry
+        if oy >= H:
+            break
+        base = ry * stride
+        for rx in range(w):
+            ox = x_off + rx
+            if ox >= W:
+                break
+            if raw[base + (rx >> 3)] & (0x80 >> (rx & 7)):
+                canvas.pixel(ox, oy, INK)
+
+
 RENDERERS = {
     "status_card": render_status_card,
     "alert": render_alert,
     "list": render_list,
     "metric": render_metric,
     "qr": render_qr,
+    "image": render_image,
 }
 
 
@@ -376,13 +418,34 @@ def draw_battery(canvas, pct, on_battery, low=False):
         plane.rect(228, 113, fillw, 5, INK, True)
 
 
-def draw_to_epd(epd, layout, content, batt=None):
+def _invert_black(epd):
+    """Flip the black plane (ink<->paper) for the `invert` render hint. Driver-
+    agnostic: tri-color exposes buffer_black, mono exposes buffer. Red plane is
+    left alone (inverting it would flood the background red)."""
+    buf = getattr(epd, "buffer_black", None)
+    if buf is None:
+        buf = getattr(epd, "buffer", None)
+    if buf is not None:
+        for i in range(len(buf)):
+            buf[i] ^= 0xFF
+
+
+def draw_to_epd(epd, layout, content, batt=None, invert=False):
     """Render a resolved screen into the epd plane(s) and push it. `batt`, when
-    given, is (pct, on_battery, low) and overlays a battery badge bottom-right."""
+    given, is (pct, on_battery, low) and overlays a battery badge bottom-right.
+    `invert` flips the black plane (per-event render hint)."""
     canvas = _prep(epd)
     render(canvas, layout, content)
     if batt is not None and batt[0] is not None:
         draw_battery(canvas, batt[0], batt[1], batt[2] if len(batt) > 2 else False)
+    if invert:
+        _invert_black(epd)
+    _push(epd)
+
+
+def draw_blank(epd):
+    """Wipe the panel to PAPER (the `clear` one-shot action)."""
+    _prep(epd).fill(PAPER)
     _push(epd)
 
 

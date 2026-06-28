@@ -125,3 +125,20 @@ def test_schema_alias_roundtrip():
     dumped = env.model_dump(by_alias=True)
     assert dumped["schema"] == "pico-paper.v1"
     assert "schema_" not in dumped
+
+
+def test_image_layout_validates_bitmap():
+    import base64
+    good = base64.b64encode(bytes([0x80] + [0] * 7)).decode()   # 8x8 = ceil(8/8)*8 = 8 bytes
+    env = validate_envelope(_env(layout="image", content={"w": 8, "h": 8, "data": good}))
+    assert env.layout == "image"
+    # wrong data length for the declared dims -> 422
+    with pytest.raises(ValidationError):
+        validate_envelope(_env(layout="image",
+                               content={"w": 8, "h": 8, "data": base64.b64encode(b"\x00").decode()}))
+
+
+def test_render_hints_default_false():
+    env = validate_envelope(_env())
+    assert env.invert is False and env.full_refresh is False
+    assert validate_envelope(_env(invert=True)).invert is True

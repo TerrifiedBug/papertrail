@@ -33,7 +33,9 @@ Content-Type: application/json
 | `channel`     | yes | logical channel the device subscribes to, `1..64` chars. A channel-scoped token that doesn't match → `403` |
 | `kind`        | no  | `"base"` (default) or `"interrupt"` — see below |
 | `ttl_seconds` | no  | **interrupt only**; omitted/`0` → default **300s**; cap `604800` (7d). Ignored for base. |
-| `layout`      | yes | one of `status_card` `alert` `list` `metric` `qr` |
+| `invert`      | no  | render hint; `true` draws the screen inverted (default `false`) |
+| `full_refresh`| no  | render hint; `true` forces a full panel refresh (default `false`; no-op on the tri-color panel) |
+| `layout`      | yes | one of `status_card` `alert` `list` `metric` `qr` `image` |
 | `content`     | yes | per-layout shape (below); extra/unknown fields → `422` |
 
 ### base vs interrupt (this is the whole model)
@@ -104,6 +106,21 @@ plain ASCII. The listed caps are render limits — pre-trim or text clips.
 ### `qr` — title + QR (rendered on-device from `qr_data`) + caption
 ```jsonc
 { "title": str≤15, "qr_data": str (1..512), "caption": str (wraps, ~7×17) }
+```
+
+### `image` — inline 1-bit bitmap (icons, logos, agent-rendered glyphs)
+```jsonc
+{ "title": str≤15 (optional), "w": int 1..128, "h": int 1..128, "data": base64 }
+```
+`data` is base64 of `ceil(w/8)*h` bytes — a 1-bit **MONO_HLSB** bitmap: row-major; within
+each byte the **MSB is the leftmost pixel**; a **set bit = a black/INK pixel**. The server
+checks `len(decode(data)) == ceil(w/8)*h` (else `422`). Rendered **centered**, below the
+optional title. Base64 is ASCII/binary-safe (it skips the 8×8 font sanitizer) — ideal for
+shipping an agent-rasterised icon or logo with no external fetch.
+```json
+{ "schema":"pico-paper.v1","id":"logo-0001","device":"kitchen-01","channel":"home.status",
+  "kind":"base","layout":"image",
+  "content":{"title":"Logo","w":8,"h":8,"data":"gYGBgYGBgYE="} }
 ```
 
 ---

@@ -132,7 +132,8 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
         # (both None here -- no body to read) so callers never KeyError on a path.
         return {"action": "offline", "etag": last_etag, "screen": None,
                 "error": "request failed: " + str(e),
-                "poll_interval": None, "control_fw": None}
+                "poll_interval": None, "control_fw": None,
+                "control_action": None, "hints": None}
 
     body = None
     error = None
@@ -164,20 +165,27 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
     # bump forces a 200). control.fw drives the OTA trigger in main.cycle().
     interval = None
     control_fw = None
+    control_action = None
+    hints = body.get("hints") if isinstance(body, dict) else None
     control = body.get("control") if isinstance(body, dict) else None
     if isinstance(control, dict):
         interval = clamp_interval(control.get("poll_interval"))
         fw = control.get("fw")
         if fw is not None:
             control_fw = str(fw)
+        ca = control.get("action")
+        if isinstance(ca, dict) and ca.get("name"):
+            control_action = ca
 
     if action == "render" and body is None:
         # 200 but unparseable body -> treat as offline rather than render garbage.
         return {"action": "offline", "etag": last_etag, "screen": None,
                 "error": error or "empty body", "poll_interval": interval,
-                "control_fw": control_fw}
+                "control_fw": control_fw, "control_action": control_action,
+                "hints": hints}
 
     return {"action": action, "etag": etag,
             "screen": body if action == "render" else None,
             "error": error if action == "offline" else None,
-            "poll_interval": interval, "control_fw": control_fw}
+            "poll_interval": interval, "control_fw": control_fw,
+            "control_action": control_action, "hints": hints}

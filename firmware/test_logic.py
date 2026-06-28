@@ -539,6 +539,32 @@ def test_ota_crash_loop():
     assert ota.should_restore(None, 3) is False, "unreadable counter -> don't restore"
 
 
+def test_render_image():
+    import base64
+    data = base64.b64encode(bytes([0x80] + [0] * 7)).decode()   # 8x8, top-left bit set
+    c = RecordingCanvas()
+    render.render_image(c, {"w": 8, "h": 8, "data": data})
+    assert c.ops[0] == ("fill", PAPER), "cleared first"
+    pixels = [o for o in c.ops if o[0] == "pixel"]
+    assert pixels == [("pixel", 121, 57, INK)], "single centered INK pixel (top-left bit)"
+
+
+def test_invert_xors_black_plane():
+    class _Tri:
+        def __init__(self):
+            self.buffer_black = bytearray([0x00, 0xFF, 0xAA])
+    t = _Tri()
+    render._invert_black(t)
+    assert list(t.buffer_black) == [0xFF, 0x00, 0x55]
+
+    class _Mono:
+        def __init__(self):
+            self.buffer = bytearray([0x0F])
+    m = _Mono()
+    render._invert_black(m)
+    assert list(m.buffer) == [0xF0]
+
+
 TESTS = [
     test_battery_curve,
     test_draw_battery,
@@ -563,6 +589,8 @@ TESTS = [
     test_alert_severity_labels,
     test_dispatch_and_offline,
     test_qr_end_to_end,
+    test_render_image,
+    test_invert_xors_black_plane,
     test_on_battery_detection,
 ]
 

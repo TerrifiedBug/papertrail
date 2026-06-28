@@ -251,13 +251,32 @@ def cycle(panel, last_etag, interval_pref):
     if result.get("poll_interval") is not None:
         new_pref = result["poll_interval"]
 
+    # One-shot device action (queued by the bridge, delivered+cleared server-side;
+    # we just execute). reboot/clear are handled here; force_full_refresh needs no
+    # special case -- its token busts the ETag so the screen below simply redraws.
+    act = result.get("control_action")
+    if act:
+        name = act.get("name")
+        if name == "reboot":
+            print("action: reboot")
+            panel.rest()
+            if _HW:
+                machine.reset()                 # never returns
+        elif name == "clear":
+            print("action: clear")
+            panel.draw(render.draw_blank)
+            save_etag("")                        # re-render on the next change
+            return "", new_pref, new_pref, use_deep
+
     action = result["action"]
     if action == "render":
         screen = result["screen"] or {}
+        hints = result.get("hints") or {}
         # battery badge overlaid bottom-right (low is False on this path -- a low
-        # battery short-circuits to the dedicated screen above).
+        # battery short-circuits above). `invert` is a per-event render hint.
         panel.draw(render.draw_to_epd, screen.get("layout"),
-                   screen.get("content") or {}, (pct, on_battery, low))
+                   screen.get("content") or {}, (pct, on_battery, low),
+                   bool(hints.get("invert")))
         new = result["etag"] or ""
         save_etag(new)
         print("rendered:", screen.get("layout"), "etag", new[:12], "interval", new_pref)
