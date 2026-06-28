@@ -154,7 +154,6 @@ _CURRENT_EXAMPLE = {
     "control": {"poll_interval": 120, "fw": "a1b2c3d4e5f6"},
     "source_event_id": None,
     "kind": None,
-    "priority": None,
     "etag": "c0ffee...",
     "rendered_at": 1750000000,
 }
@@ -357,7 +356,6 @@ def create_app(
                 "etag": resolution.etag,
                 "source_event_id": resolution.source_event_id,
                 "kind": resolution.kind,
-                "priority": resolution.priority,
             },
         }
 
@@ -428,7 +426,6 @@ def create_app(
             device=envelope.device,
             channel=envelope.channel,
             kind=envelope.kind,
-            priority=envelope.priority,
             ttl_seconds=(
                 0 if envelope.kind == "base"
                 else (envelope.ttl_seconds or INTERRUPT_DEFAULT_TTL)
@@ -830,7 +827,6 @@ def create_app(
                 {
                     "id": e.id,
                     "channel": e.channel,
-                    "priority": e.priority,
                     "ttl_seconds": e.ttl_seconds,
                     "layout": e.layout,
                     "received_at": e.received_at,
@@ -851,7 +847,7 @@ def create_app(
 
         # Build a wire envelope and reuse the SAME validation as public ingest
         # (schema.validate_envelope -> Envelope + CONTENT_MODELS): layout
-        # allowlist, content shape, ttl/priority bounds. device is forced to the
+        # allowlist, content shape, ttl bounds. device is forced to the
         # path device; id is auto-generated when omitted.
         envelope_in = {
             "schema": SCHEMA_VERSION,
@@ -859,7 +855,6 @@ def create_app(
             "device": device_id,
             "channel": raw.get("channel"),
             "kind": raw.get("kind", "base"),
-            "priority": raw.get("priority", 0),
             "ttl_seconds": raw.get("ttl_seconds"),
             "layout": raw.get("layout"),
             "content": raw.get("content"),
@@ -875,7 +870,6 @@ def create_app(
             device=envelope.device,
             channel=envelope.channel,
             kind=envelope.kind,
-            priority=envelope.priority,
             ttl_seconds=(
                 0 if envelope.kind == "base"
                 else (envelope.ttl_seconds or INTERRUPT_DEFAULT_TTL)

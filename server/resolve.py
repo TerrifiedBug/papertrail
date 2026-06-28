@@ -50,7 +50,7 @@ def compute_etag(
     """sha256 hex of the render-relevant payload ONLY.
 
     Only these keys are hashed so the ETag is stable across requests while the
-    screen is unchanged; ``rendered_at`` / ``source_event_id`` / ``priority`` are
+    screen is unchanged; ``rendered_at`` / ``source_event_id`` / ``kind`` are
     deliberately excluded (they would churn the ETag every request).
 
     ``control`` is included so a rare remote control change (e.g. poll_interval)
@@ -73,7 +73,6 @@ class Resolution:
     layout: str
     content: dict[str, Any]
     source_event_id: Optional[str]   # None when fallback
-    priority: Optional[int]          # Deprecated compatibility metadata
     etag: str
     control: Optional[dict[str, Any]] = None   # {"poll_interval": N}
     received_at: Optional[int] = None          # epoch the winning event was ingested
@@ -91,7 +90,6 @@ class Resolution:
             "control": self.control,
             "source_event_id": self.source_event_id,
             "kind": self.kind,
-            "priority": self.priority,
             "received_at": self.received_at,
             "etag": self.etag,
             "rendered_at": int(time.time()) if rendered_at is None else rendered_at,
@@ -147,7 +145,6 @@ def resolve_from_events(
             layout=layout,
             content=content,
             source_event_id=None,
-            priority=None,
             control=control,
             etag=compute_etag(device.id, layout, content, etag_control),
         )
@@ -162,7 +159,6 @@ def resolve_from_events(
         content=chosen.content,
         source_event_id=chosen.id,
         kind=chosen.kind,
-        priority=chosen.priority,
         control=control,
         received_at=chosen.received_at,
         etag=compute_etag(device.id, chosen.layout, chosen.content, etag_control),

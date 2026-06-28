@@ -234,7 +234,7 @@ curl -sS -X POST https://paper.example.com/api/devices/kitchen-01/events \
 ```bash
 curl -sS https://paper.example.com/api/devices/kitchen-01/current \
   -H "Authorization: Bearer $DEVICE_TOKEN"
-# -> 200 + ETag header + {schema,device,layout,content,control,source_event_id,kind,priority,etag,rendered_at}
+# -> 200 + ETag header + {schema,device,layout,content,control,source_event_id,kind,etag,rendered_at}
 ```
 
 ### 5. Point the Pico at it

@@ -18,8 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 SCHEMA_VERSION = "pico-paper.v1"
 TTL_CAP = 604_800          # 7 days, seconds
 INTERRUPT_DEFAULT_TTL = 300
-PRIORITY_MIN = 0
-PRIORITY_MAX = 255
 QR_DATA_MAX = 512
 ID_PATTERN = r"^[A-Za-z0-9._:-]+$"
 
@@ -161,21 +159,12 @@ class Envelope(BaseModel):
     device: str = Field(min_length=1)
     channel: str = Field(min_length=1, max_length=64)
     kind: EventKind = "base"
-    # Deprecated compatibility metadata. Kept on the wire so old clients do not
-    # break, but it no longer participates in screen resolution.
-    priority: int = 0
     # For interrupts, omitted or 0 means use INTERRUPT_DEFAULT_TTL. Base screens
     # ignore ttl_seconds entirely and persist until replaced. Positive values cap
     # at TTL_CAP = 7 days.
     ttl_seconds: Optional[int] = Field(default=None, ge=0)
     layout: Layout
     content: dict[str, Any]
-
-    @field_validator("priority")
-    @classmethod
-    def _clamp_priority(cls, v: int) -> int:
-        # priority is clamped (not rejected) to 0..255; higher wins.
-        return max(PRIORITY_MIN, min(PRIORITY_MAX, v))
 
     @field_validator("ttl_seconds")
     @classmethod

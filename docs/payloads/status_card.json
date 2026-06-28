@@ -3,8 +3,7 @@
   "id": "evt_status_0001",
   "device": "kitchen-01",
   "channel": "home.status",
-  "priority": 50,
-  "ttl_seconds": 900,
+  "kind": "base",
   "layout": "status_card",
   "content": {
     "title": "Home Server",

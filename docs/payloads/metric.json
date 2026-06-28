@@ -3,8 +3,7 @@
   "id": "evt_metric_0001",
   "device": "office-01",
   "channel": "energy",
-  "priority": 40,
-  "ttl_seconds": 300,
+  "kind": "base",
   "layout": "metric",
   "content": {
     "label": "Solar output",

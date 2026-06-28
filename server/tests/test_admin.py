@@ -211,7 +211,7 @@ def test_push_event_bad_layout_422(admin_ctx):
     r = admin_ctx.client.post(
         f"{DEVICES}/{DEVICE_ID}/events",
         headers=admin_bearer(),
-        json={"channel": "home.status", "priority": 10, "ttl_seconds": 60, "layout": "nope", "content": {}},
+        json={"channel": "home.status", "ttl_seconds": 60, "layout": "nope", "content": {}},
     )
     assert r.status_code == 422
 
@@ -223,7 +223,6 @@ def test_push_event_201_and_resolves(admin_ctx):
         json={
             "channel": "home.status",
             "kind": "interrupt",
-            "priority": 90,
             "ttl_seconds": 600,
             "layout": "status_card",
             "content": {"title": "Pushed"},
@@ -249,7 +248,7 @@ def test_delete_event_clears_screen(admin_ctx):
     r = admin_ctx.client.post(
         f"{DEVICES}/{DEVICE_ID}/events",
         headers=admin_bearer(),
-        json={"channel": "home.status", "kind": "interrupt", "priority": 90, "ttl_seconds": 600,
+        json={"channel": "home.status", "kind": "interrupt", "ttl_seconds": 600,
               "layout": "status_card", "content": {"title": "Temp"}},
     )
     evt_id = r.json()["id"]
@@ -269,11 +268,11 @@ def test_events_newest_first_and_expired_flag(admin_ctx):
     now = int(time.time())
     # Insert directly with controlled timestamps: one stale, one fresh.
     admin_ctx.store.insert_event(EventRow(
-        id="old", device=DEVICE_ID, channel="home.status", priority=10, ttl_seconds=60,
+        id="old", device=DEVICE_ID, channel="home.status", ttl_seconds=60,
         layout="status_card", content={"title": "old"}, received_at=now - 10_000, raw_size=10, kind="interrupt",
     ))
     admin_ctx.store.insert_event(EventRow(
-        id="new", device=DEVICE_ID, channel="home.status", priority=10, ttl_seconds=600,
+        id="new", device=DEVICE_ID, channel="home.status", ttl_seconds=600,
         layout="status_card", content={"title": "new"}, received_at=now, raw_size=10, kind="interrupt",
     ))
     events = admin_ctx.client.get(f"{DEVICES}/{DEVICE_ID}/events", headers=admin_bearer()).json()

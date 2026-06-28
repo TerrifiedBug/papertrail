@@ -206,7 +206,7 @@ geometry in [`layout-specs.md`](layout-specs.md). On success the bridge returns
 ```bash
 curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
   "schema":"pico-paper.v1","id":"evt_status_0001","device":"kitchen-01",
-  "channel":"home.status","priority":50,"ttl_seconds":900,"layout":"status_card",
+  "channel":"home.status","kind":"base","layout":"status_card",
   "content":{
     "title":"Home Server","status":"OK","subtitle":"All services nominal",
     "lines":["CPU      12%","RAM      41%","Disk     63%","Uptime   18d 4h"],
@@ -220,7 +220,7 @@ curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
 ```bash
 curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
   "schema":"pico-paper.v1","id":"evt_alert_0001","device":"kitchen-01",
-  "channel":"home.alerts","priority":200,"ttl_seconds":600,"layout":"alert",
+  "channel":"home.alerts","kind":"interrupt","ttl_seconds":600,"layout":"alert",
   "content":{
     "severity":"high","title":"Water Leak",
     "message":"Sensor under the sink detected moisture. Shut off the supply valve and check immediately.",
@@ -234,7 +234,7 @@ curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
 ```bash
 curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
   "schema":"pico-paper.v1","id":"evt_list_0001","device":"kitchen-01",
-  "channel":"home.tasks","priority":30,"ttl_seconds":86400,"layout":"list",
+  "channel":"home.tasks","kind":"base","layout":"list",
   "content":{
     "title":"Shopping",
     "items":["Milk","Eggs","Coffee beans","Bread","Dish soap"],
@@ -248,7 +248,7 @@ curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
 ```bash
 curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
   "schema":"pico-paper.v1","id":"evt_metric_0001","device":"kitchen-01",
-  "channel":"energy","priority":40,"ttl_seconds":300,"layout":"metric",
+  "channel":"energy","kind":"base","layout":"metric",
   "content":{
     "label":"Solar output","value":"3.42","unit":"kW",
     "trend":"UP +0.4 kW vs 1h","footer":"inverter-A"
@@ -261,7 +261,7 @@ curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
 ```bash
 curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
   "schema":"pico-paper.v1","id":"evt_qr_0001","device":"kitchen-01",
-  "channel":"guest","priority":20,"ttl_seconds":43200,"layout":"qr",
+  "channel":"guest","kind":"base","layout":"qr",
   "content":{
     "title":"Guest WiFi",
     "qr_data":"WIFI:T:WPA;S:GuestNet;P:welcome123;;",
@@ -270,10 +270,11 @@ curl -sS -X POST "$POST" -H "$ING" -H "$JSON" -d '{
 }'
 ```
 
-After posting several, the resolved screen is the highest-`priority`, non-expired
-event on a subscribed channel (newest `received_at` breaks ties). With the above,
-the `alert` (priority 200) wins until its 600 s TTL lapses, then the next-highest
-live event surfaces, and finally the device's `fallback`.
+After posting several, resolution prefers the **newest live (non-expired)
+`interrupt`** on a subscribed channel; with none live it shows the **newest `base`**
+screen, and with neither the device's **`fallback`** (idle) screen. With the above,
+the `alert` is an `interrupt` that overlays the base screens until its 600 s TTL
+lapses, after which the newest `base` shows, and finally the device's `fallback`.
 
 ### Read the resolved screen (what the Pico sees)
 
@@ -284,7 +285,7 @@ curl -sSi "$BASE/api/devices/kitchen-01/current" -H "$DEV"
 # ETag: "a1b2..."
 # {"schema":"pico-paper.v1","device":"kitchen-01","layout":"alert","content":{...},
 #  "control":{"poll_interval":120},
-#  "source_event_id":"evt_alert_0001","priority":200,"etag":"a1b2...","rendered_at":...}
+#  "source_event_id":"evt_alert_0001","kind":"interrupt","etag":"a1b2...","rendered_at":...}
 
 # Conditional GET: pass the ETag you last rendered.
 curl -sSi "$BASE/api/devices/kitchen-01/current" -H "$DEV" \
@@ -293,7 +294,7 @@ curl -sSi "$BASE/api/devices/kitchen-01/current" -H "$DEV" \
 ```
 
 The ETag is `sha256(canonical_json({content, device, layout, control}))` — only
-those keys are hashed, so `rendered_at`, `source_event_id`, and `priority` never
+those keys are hashed, so `rendered_at`, `source_event_id`, and `kind` never
 churn it. The screen is stable across polls until the content (or `control`)
 actually changes; a `poll_interval` change busts the `304` exactly once so the
 Pico picks it up. The `"control"` key is **not** the device id — that is the
@@ -398,9 +399,10 @@ python server/dump_openapi.py    # builds the app on a throwaway in-memory DB,
 
 The "VPS dashboard" is just another ingest source: a cron job that builds one
 summary event per day and POSTs it like any other webhook. Use a **date-stamped
-`id`** so a retry or an overlapping run dedups instead of double-writing, a TTL a
-little over 24 h so it survives until tomorrow's push, and a **low priority** so
-real-time alerts always override it.
+`id`** so a retry or an overlapping run dedups instead of double-writing, and send
+it as a **`base`** screen (persistent, no TTL needed) so it stays up until the next
+day's push replaces it — while any live `interrupt` (e.g. a real-time alert) still
+overlays it in the meantime.
 
 ```bash
 #!/usr/bin/env bash
@@ -417,8 +419,7 @@ curl -sS -X POST "$BASE/api/devices/kitchen-01/events" \
     \"id\":\"daily-$DAY\",
     \"device\":\"kitchen-01\",
     \"channel\":\"home.status\",
-    \"priority\":10,
-    \"ttl_seconds\":90000,
+    \"kind\":\"base\",
     \"layout\":\"status_card\",
     \"content\":{
       \"title\":\"Today\",
@@ -437,7 +438,7 @@ curl -sS -X POST "$BASE/api/devices/kitchen-01/events" \
 
 Because `id="daily-<date>"` is unique per day, a re-run on the same day is a
 no-op (`200 {"status":"duplicate"}`); the next day's id is new and supersedes the
-old one (its TTL has lapsed and it loses on `received_at` anyway).
+old one as the newest `base` on the channel.
 
 ---
 

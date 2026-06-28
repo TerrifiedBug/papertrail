@@ -13,7 +13,7 @@ def test_post_then_current(ctx):
     r = ctx.client.post(
         "/api/devices/kitchen-01/events",
         headers=bearer(INGEST_TOKEN),
-        json=make_event(id="evt_a", priority=50, content={"title": "Hi"}),
+        json=make_event(id="evt_a", content={"title": "Hi"}),
     )
     assert r.status_code == 201
     assert r.json()["status"] == "stored"
@@ -24,7 +24,6 @@ def test_post_then_current(ctx):
     assert body["layout"] == "status_card"
     assert body["content"]["title"] == "Hi"
     assert body["source_event_id"] == "evt_a"
-    assert body["priority"] == 50
     assert body["schema"] == "pico-paper.v1"
     assert g.headers["etag"].strip('"') == body["etag"]
 
@@ -33,17 +32,16 @@ def test_newest_base_wins_over_http(ctx):
     ctx.client.post(
         "/api/devices/kitchen-01/events",
         headers=bearer(INGEST_TOKEN),
-        json=make_event(id="evt_old_high", priority=200, content={"title": "old high"}),
+        json=make_event(id="evt_old", content={"title": "old"}),
     )
     ctx.client.post(
         "/api/devices/kitchen-01/events",
         headers=bearer(INGEST_TOKEN),
-        json=make_event(id="evt_new_low", priority=10, content={"title": "new low"}),
+        json=make_event(id="evt_new_low", content={"title": "new low"}),
     )
     g = ctx.client.get("/api/devices/kitchen-01/current", headers=bearer(DEVICE_TOKEN))
     assert g.json()["content"]["title"] == "new low"
     assert g.json()["kind"] == "base"
-    assert g.json()["priority"] == 10
 
 
 def test_dedup_first_write_wins(ctx):
@@ -86,7 +84,6 @@ def test_ttl_expiry_falls_back_over_http(ctx):
             id="stale",
             device="kitchen-01",
             channel="home.status",
-            priority=99,
             ttl_seconds=60,
             layout="status_card",
             content={"title": "old"},
@@ -103,7 +100,7 @@ def test_empty_store_returns_fallback(ctx):
     g = ctx.client.get("/api/devices/kitchen-01/current", headers=bearer(DEVICE_TOKEN))
     assert g.status_code == 200
     assert g.json()["source_event_id"] is None
-    assert g.json()["priority"] is None
+    assert g.json()["kind"] is None
     assert g.json()["layout"] == "status_card"
 
 

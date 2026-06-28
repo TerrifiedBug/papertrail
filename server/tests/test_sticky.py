@@ -20,7 +20,7 @@ def _device():
 
 def _event(ttl, received_at=1000):
     return EventRow(
-        id="e1", device="d", channel="c", priority=50, ttl_seconds=ttl,
+        id="e1", device="d", channel="c", ttl_seconds=ttl,
         layout="status_card", content=_CARD, received_at=received_at, raw_size=10,
         kind="interrupt",
     )
@@ -52,7 +52,7 @@ def test_omitted_ttl_accepted_and_received_at_present(ctx):
         "/api/devices/kitchen-01/events", headers=bearer(INGEST_TOKEN),
         json={
             "schema": "pico-paper.v1", "id": "evt_sticky", "device": "kitchen-01",
-            "channel": "home.status", "priority": 50, "layout": "status_card",
+            "channel": "home.status", "layout": "status_card",
             "content": {"title": "STICKY", "status": "OK", "subtitle": "",
                         "lines": [], "footer": ""},
         },
@@ -68,7 +68,7 @@ def test_negative_ttl_rejected(ctx):
         "/api/devices/kitchen-01/events", headers=bearer(INGEST_TOKEN),
         json={
             "schema": "pico-paper.v1", "id": "evt_neg", "device": "kitchen-01",
-            "channel": "home.status", "priority": 50, "ttl_seconds": -5,
+            "channel": "home.status", "ttl_seconds": -5,
             "layout": "status_card",
             "content": {"title": "x", "status": "", "subtitle": "", "lines": [], "footer": ""},
         },
