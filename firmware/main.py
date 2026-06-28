@@ -242,6 +242,8 @@ def cycle(panel, last_etag, interval_pref):
     if not wifi_ok:
         if last_etag != OFFLINE_SENTINEL:
             panel.draw(render.draw_offline, "wifi failed")
+            save_etag(OFFLINE_SENTINEL)      # persist: a deepsleep reset must re-fetch,
+                                             # not poll a stale etag -> 304 -> stuck offline
         return OFFLINE_SENTINEL, interval_pref, interval_pref, use_deep
 
     # Apply any server-tuned cadence (already clamped to [30,3600] by the poller).
@@ -264,6 +266,7 @@ def cycle(panel, last_etag, interval_pref):
     if action == "offline":
         if last_etag != OFFLINE_SENTINEL:
             panel.draw(render.draw_offline, result.get("error") or "server error")
+            save_etag(OFFLINE_SENTINEL)      # persist (see wifi-fail path above)
         return OFFLINE_SENTINEL, new_pref, new_pref, use_deep
 
     # action == "skip": unchanged (304) -> panel untouched.
