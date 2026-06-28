@@ -6,6 +6,7 @@ device; a Raspberry Pi Pico W with a Waveshare 2.13" e-paper HAT wakes every two
 minutes, asks "what should I show?", and goes back to sleep. The display holds the
 last image at **zero power**, so the tag can run for weeks on a small LiPo.
 
+- **For AI agents:** [`docs/for-agents.md`](docs/for-agents.md) — hand this to your coding agent to build a "send a screen to papertrail" skill.
 - **Wire contract:** [`SCHEMA.md`](SCHEMA.md) — the frozen `pico-paper.v1` envelope.
 - **Pixel geometry:** [`docs/layout-specs.md`](docs/layout-specs.md) — exact regions for the 250x122 panel.
 - **Operations:** [`docs/deploy.md`](docs/deploy.md) — run the bridge, mint tokens, push events.
@@ -13,7 +14,7 @@ last image at **zero power**, so the tag can run for weeks on a small LiPo.
 - **Dashboard:** [`docs/dashboard.md`](docs/dashboard.md) — the LAN-only admin web UI (devices, tokens, live preview).
 - **Flashing:** [`docs/flashing.md`](docs/flashing.md) — provision a Pico over USB from the browser (config + firmware upload).
 - **OTA:** [`docs/ota.md`](docs/ota.md) — over-the-air firmware updates: manifest, delta pull, atomic write, rollback.
-- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — sticky events, what's next.
+- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — shipped + what's next.
 
 ---
 

@@ -48,8 +48,9 @@ every ~10s.
 
 **Manage.** Per device you can **send a test event** (layout composer with a live
 preview), **set the poll interval** (`PATCH /config`, clamped 30–3600s), and open an
-**events drawer** — recent events with channel/kind/expiry, each deletable to clear
-a stuck screen.
+**events drawer** — recent events with channel/kind/expiry; **click any event to expand
+it to its raw payload + a rendered ePaper preview** of that screen, and each is deletable
+to clear a stuck screen.
 
 **Devices & tokens.** **Create** a device (id, channels, fallback screen, intervals),
 **delete** one (cascades its tokens + events), and **mint / list / revoke** tokens. A

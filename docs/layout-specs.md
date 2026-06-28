@@ -68,6 +68,14 @@ small and every size pixel-deterministic.
 
 `hline(y)` = 1 px INK horizontal rule spanning `x 0..249` at row `y`.
 
+### Battery badge (overlay, all 5 layouts)
+
+After a layout renders, `render.draw_battery` overlays a badge in the **bottom-right**
+corner (`x≈188..246, y≈109..121`): the charge `%` + a level-filled battery glyph, a `+`
+prefix when wired/charging, drawn on the **red plane when low** (tri-color). It seats on a
+cleared patch so it sits above a long footer's tail. Fed `(pct, on_battery, low)` from
+`main.read_battery`; skipped on the offline / low-battery screens.
+
 ---
 
 ## 1. `status_card`
