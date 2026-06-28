@@ -260,6 +260,7 @@
     <div class="nav">
       <button class="btn" data-tab="dashboard" type="button">Dashboard</button>
       <button class="btn" data-tab="tokens" type="button">Tokens</button>
+      <button class="btn" data-tab="diag" type="button">Diagnostics</button>
       <a class="btn" href="/flash">Flash a device</a>
       <button class="btn btn-danger" id="signout" type="button">Sign out</button>
     </div>
@@ -292,7 +293,7 @@ let modalCount = 0;
 let refreshTimer = null;
 const state = { tab: "dashboard", devices: [], fwLatest: null };
 
-const LAYOUTS = ["status_card", "alert", "list", "metric", "qr"];
+const LAYOUTS = ["status_card", "alert", "list", "metric", "qr", "image"];
 const LAYOUT_FIELDS = {
   status_card: [
     { k: "title",    label: "Title",                 type: "text" },
@@ -323,6 +324,12 @@ const LAYOUT_FIELDS = {
     { k: "title",   label: "Title",    type: "text" },
     { k: "qr_data", label: "QR data",  type: "text" },
     { k: "caption", label: "Caption",  type: "textarea" }
+  ],
+  image: [
+    { k: "title", label: "Title (optional)",                     type: "text" },
+    { k: "w",     label: "Width (px)",                           type: "text" },
+    { k: "h",     label: "Height (px)",                          type: "text" },
+    { k: "data",  label: "Bitmap (base64, MONO_HLSB)",           type: "textarea" }
   ]
 };
 
@@ -363,6 +370,12 @@ function selectEl(options, value) {
     s.appendChild(opt);
   });
   return s;
+}
+// A checkbox + label pair (XSS-safe label via textContent). The caller keeps a
+// reference to `cb` and reads `cb.checked`.
+function checkboxRow(labelText, cb) {
+  return el("label", { class: "pill", style: "cursor:pointer;font-weight:600;" },
+    cb, document.createTextNode(labelText));
 }
 
 /* ============================================================
@@ -513,6 +526,7 @@ function renderPreview(canvas, layout, content) {
     else if (layout === "list") renderList(ctx, c);
     else if (layout === "metric") renderMetric(ctx, c);
     else if (layout === "qr") renderQr(ctx, c);
+    else if (layout === "image") renderImage(ctx, c);
     else drawText(ctx, clip("layout: " + layout, 30), 4, 4, 1);
   } catch (e) {
     drawText(ctx, "preview error", 4, 4, 1);
@@ -590,6 +604,44 @@ function renderQr(ctx, c) {
   // represent the qr payload as text inside the box (the device encodes a real QR)
   wrapLines(c.qr_data, 10, 9).forEach(function (ln, i) { drawText(ctx, ln, 11, 30 + 9 * i, 1); });
   wrapLines(c.caption, 17, 7).forEach(function (ln, i) { drawText(ctx, ln, 104, 30 + 11 * i, 1); });
+}
+// MONO_HLSB bitmap: row-major, ceil(w/8) bytes per row, MSB = leftmost pixel,
+// set bit = INK (black). Decoded from base64 and centered in the panel (below the
+// title if present), clipped to the 250x122 logical panel.
+function renderImage(ctx, c) {
+  let top = 2;
+  const title = asciiSafe(c.title);
+  if (title !== "") {
+    drawText(ctx, clip(c.title, 30), 4, 2, 1);
+    hline(ctx, 14);
+    top = 18;
+  }
+  const w = Math.floor(Number(c.w) || 0);
+  const h = Math.floor(Number(c.h) || 0);
+  if (w <= 0 || h <= 0 || c.data == null) return;
+  let bytes;
+  try { bytes = atob(String(c.data)); } catch (e) { return; }
+  const rowBytes = Math.ceil(w / 8);
+  const availH = 122 - top;
+  // Center the bitmap horizontally across the panel and vertically in the area
+  // below the title.
+  const ox = Math.floor((250 - w) / 2);
+  const oy = top + Math.floor((availH - h) / 2);
+  ctx.fillStyle = INK;
+  for (let row = 0; row < h; row++) {
+    const rowBase = row * rowBytes;
+    const py = oy + row;
+    if (py < top || py >= 122) continue;                       // clip to panel
+    for (let col = 0; col < w; col++) {
+      const idx = rowBase + (col >> 3);
+      if (idx >= bytes.length) continue;
+      const bit = (bytes.charCodeAt(idx) >> (7 - (col & 7))) & 1;   // MSB = leftmost
+      if (!bit) continue;                                      // 0 = paper, skip
+      const px = ox + col;
+      if (px < 0 || px >= 250) continue;                       // clip to panel
+      ctx.fillRect(px, py, 1, 1);
+    }
+  }
 }
 
 /* ============================================================
@@ -696,6 +748,7 @@ function setTab(tab) {
   });
   if (tab === "dashboard") loadDashboard();
   else if (tab === "tokens") loadTokens();
+  else if (tab === "diag") loadDiagnostics();
 }
 function startRefresh() {
   stopRefresh();
@@ -809,6 +862,11 @@ function deviceCard(d) {
   caption.appendChild(el("strong", { text: cur.layout }));
   caption.appendChild(document.createTextNode(" · " + sourceLabel + (cur.kind ? " · " + cur.kind : "")));
 
+  // Battery sparkline + runtime estimate — lazily fetched per card so we don't
+  // block the dashboard render on N battery lookups.
+  const battery = el("div", { class: "battery", style: "margin:2px 0 8px;min-height:18px;display:flex;align-items:center;gap:8px;" });
+  loadBattery(d, battery);
+
   const foot = el("div", { class: "card-foot" },
     el("span", { class: "meta", text: "last seen " + relTime(tel.last_seen_at) }),
     el("span", { class: "pill", text: d.poll_interval_s + "s poll" })
@@ -819,6 +877,9 @@ function deviceCard(d) {
     el("button", { class: "btn btn-sm", type: "button", text: "Interval", onclick: function () { openInterval(d); } }),
     el("button", { class: "btn btn-sm", type: "button", text: "Events", onclick: function () { openEvents(d); } }),
     el("button", { class: "btn btn-sm", type: "button", text: "Edit", onclick: function () { openEditDevice(d); } }),
+    el("button", { class: "btn btn-sm", type: "button", text: "Reboot", onclick: function () { deviceAction(d, "reboot", "Reboot " + d.id + "?"); } }),
+    el("button", { class: "btn btn-sm", type: "button", text: "Clear", onclick: function () { deviceAction(d, "clear", "Clear the screen on " + d.id + "?"); } }),
+    el("button", { class: "btn btn-sm", type: "button", text: "Force refresh", onclick: function () { deviceAction(d, "force_full_refresh", null); } }),
     el("button", { class: "btn btn-sm btn-danger", type: "button", text: "Delete", onclick: function () { confirmDeleteDevice(d); } })
   );
 
@@ -828,9 +889,66 @@ function deviceCard(d) {
     badges,
     canvas,
     caption,
+    battery,
     foot,
     actions
   );
+}
+/* Per-device action (reboot / clear / force_full_refresh). Reboot + Clear are
+   guarded by a confirm(); a queued action is applied on the device's next poll. */
+async function deviceAction(d, action, confirmMsg) {
+  if (confirmMsg && !window.confirm(confirmMsg)) return;
+  const labels = { reboot: "Reboot queued", clear: "Clear queued", force_full_refresh: "Full refresh queued" };
+  try {
+    await api("/devices/" + encodeURIComponent(d.id) + "/action", { method: "POST", body: { action: action } });
+    toast((labels[action] || "Action queued") + " — " + d.id, "ok");
+    loadDashboard(true);
+  } catch (e) { handleApiError(e, "Action"); }
+}
+/* Lazy battery fetch for one card. Best-effort: any failure (older bridge, no
+   samples) leaves the slot empty rather than breaking the card. */
+async function loadBattery(d, container) {
+  let data;
+  try { data = await api("/devices/" + encodeURIComponent(d.id) + "/battery"); }
+  catch (e) { return; }
+  if (!data) return;
+  const series = Array.isArray(data.series) ? data.series : [];
+  const days = data.days_remaining;
+  if (!series.length && days == null) return;
+  const kids = [];
+  if (series.length) kids.push(batterySparkline(series));
+  if (days != null && isFinite(Number(days))) {
+    kids.push(el("span", { class: "meta", text: "~" + Math.round(Number(days)) + " days left" }));
+  }
+  container.replaceChildren.apply(container, kids);
+}
+/* Tiny inline sparkline of battery pct over time (120x28 @2x). x maps to the
+   sample timestamp when available (else sample index); y maps 0–100% pct. */
+function batterySparkline(series) {
+  const W = 120, H = 28, pad = 2;
+  const canvas = el("canvas", { width: String(W * 2), height: String(H * 2),
+    style: "width:" + W + "px;height:" + H + "px;flex:0 0 auto;", title: "battery %" });
+  const ctx = canvas.getContext("2d");
+  ctx.scale(2, 2);
+  const pts = series.filter(function (s) { return isFinite(Number(s.pct)); });
+  if (!pts.length) return canvas;
+  const xs = pts.map(function (s) { return Number(s.at); });
+  const useTime = xs.every(function (x) { return isFinite(x); });
+  const minX = useTime ? Math.min.apply(null, xs) : 0;
+  const maxX = useTime ? Math.max.apply(null, xs) : (pts.length - 1);
+  const spanX = (maxX - minX) || 1;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  pts.forEach(function (s, i) {
+    const xv = useTime ? Number(s.at) : i;
+    const x = pad + ((xv - minX) / spanX) * (W - 2 * pad);
+    const pct = Math.max(0, Math.min(100, Number(s.pct)));
+    const y = pad + (1 - pct / 100) * (H - 2 * pad);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  return canvas;
 }
 function errorCard(e) {
   return el("div", { class: "empty" },
@@ -860,6 +978,17 @@ function openSendEvent(d) {
   const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
   function updatePreview() { renderPreview(preview, layoutSel.value, ed.read()); }
 
+  // Render hints — sent as booleans on the event payload (backend defaults false).
+  const invertCb = el("input", { type: "checkbox" });
+  const fullRefreshCb = el("input", { type: "checkbox" });
+  const hints = el("div", { class: "field" },
+    el("label", { text: "Render hints" }),
+    el("div", { class: "spread" },
+      checkboxRow("Invert", invertCb),
+      checkboxRow("Full refresh", fullRefreshCb)
+    )
+  );
+
   const errBox = el("div", { class: "meta danger" });
   const sendBtn = el("button", { class: "btn btn-primary", type: "button", text: "Send event" });
 
@@ -869,6 +998,7 @@ function openSendEvent(d) {
     field("Layout", layoutSel),
     el("div", { class: "two-col" }, field("Channel", channelInput), field("Kind", kindSel)),
     el("div", { class: "two-col" }, field("TTL seconds (interrupt only)", ttlInput), field("Event id (optional)", idInput)),
+    hints,
     ed.node,
     errBox,
     el("div", { class: "actions" }, sendBtn)
@@ -884,7 +1014,9 @@ function openSendEvent(d) {
       channel: channel,
       kind: kindSel.value,
       layout: layoutSel.value,
-      content: ed.read()
+      content: ed.read(),
+      invert: invertCb.checked,
+      full_refresh: fullRefreshCb.checked
     };
     const ttlRaw = (ttlInput.value || "").trim();
     const ttl = ttlRaw === "" ? 0 : Math.max(0, Math.round(Number(ttlRaw) || 0));
@@ -1078,6 +1210,11 @@ function openEditDevice(d) {
   const channelsInput = el("input", { class: "inp", type: "text", value: (Array.isArray(d.channels) ? d.channels.join(", ") : "") });
   const pollInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: String(d.poll_interval_s) });
   const lowBattInput = el("input", { class: "inp", type: "number", min: "30", value: String(d.low_batt_interval_s) });
+  // Quiet hours (0–23). Blank clears that bound (sent as null to /config).
+  const quietStartInput = el("input", { class: "inp", type: "number", min: "0", max: "23",
+    value: (d.quiet_start_h != null ? String(d.quiet_start_h) : ""), placeholder: "blank = off" });
+  const quietEndInput = el("input", { class: "inp", type: "number", min: "0", max: "23",
+    value: (d.quiet_end_h != null ? String(d.quiet_end_h) : ""), placeholder: "blank = off" });
 
   const fb = d.fallback || { layout: "status_card", content: {} };
   const layoutSel = selectEl(LAYOUTS, LAYOUTS.indexOf(fb.layout) !== -1 ? fb.layout : "status_card");
@@ -1092,6 +1229,10 @@ function openEditDevice(d) {
   const body = el("div", {},
     field("Channels", channelsInput),
     el("div", { class: "two-col" }, field("Poll interval (s)", pollInput), field("Low-batt interval (s)", lowBattInput)),
+    el("div", { class: "kicker", text: "quiet hours" }),
+    el("div", { class: "meta", text: "Hours (0–23) during which the device skips refreshes. Leave both blank to disable." }),
+    el("div", { style: "height:8px;" }),
+    el("div", { class: "two-col" }, field("Quiet start hour", quietStartInput), field("Quiet end hour", quietEndInput)),
     el("div", { class: "kicker", text: "fallback screen" }),
     el("div", { class: "meta", text: "The always-on default — shown when no live event is active. Set a wifi QR (or any screen) here to keep it up permanently." }),
     el("div", { style: "height:8px;" }),
@@ -1103,6 +1244,15 @@ function openEditDevice(d) {
   );
 
   const close = openModal("Edit device — " + d.id, body, { kicker: "devices" });
+
+  // Parse an hour box: blank -> null (clear), else clamped to 0–23.
+  function parseHour(v) {
+    const s = (v || "").trim();
+    if (s === "") return null;
+    const n = Math.round(Number(s));
+    if (!isFinite(n)) return null;
+    return Math.max(0, Math.min(23, n));
+  }
 
   saveBtn.addEventListener("click", async function () {
     errBox.textContent = "";
@@ -1116,6 +1266,9 @@ function openEditDevice(d) {
     saveBtn.disabled = true;
     try {
       await api("/devices/" + encodeURIComponent(d.id), { method: "PATCH", body: payload });
+      // Quiet hours live on /config; send (possibly null) bounds to set or clear.
+      await api("/devices/" + encodeURIComponent(d.id) + "/config", { method: "PATCH",
+        body: { quiet_start_h: parseHour(quietStartInput.value), quiet_end_h: parseHour(quietEndInput.value) } });
       toast("Device " + d.id + " updated", "ok");
       close();
       loadDashboard(true);
@@ -1272,6 +1425,97 @@ async function copyText(t) {
   } catch (e) {
     toast("Copy failed — select the text and copy manually", "err");
   }
+}
+
+/* ============================================================
+   DIAGNOSTICS
+   ============================================================ */
+async function loadDiagnostics() {
+  const view = document.getElementById("view");
+  const head = el("div", { class: "section-head" },
+    el("div", {}, el("div", { class: "kicker", text: "system" }), el("h2", { text: "Diagnostics" })),
+    el("div", { class: "nav" },
+      el("button", { class: "btn", type: "button", text: "Refresh", onclick: loadDiagnostics })
+    )
+  );
+  view.replaceChildren(head, el("div", { class: "meta", text: "Loading diagnostics…" }));
+  let diag;
+  try { diag = await api("/diag"); }
+  catch (e) { view.replaceChildren(head, errorCard(e)); handleApiError(e); return; }
+  view.replaceChildren(head, diagBody(diag || {}));
+}
+// firmware_manifest may be a bare version string or an object — reduce to a label.
+function fwManifestText(fm) {
+  if (fm == null) return "unknown";
+  if (typeof fm === "string") return fm;
+  if (typeof fm === "object") return (fm.version != null) ? String(fm.version) : JSON.stringify(fm);
+  return String(fm);
+}
+// quiet_hours may be null, a string, or an object {start,end} / {quiet_start_h,..}.
+function fmtQuietHours(q) {
+  if (q == null) return "—";
+  if (typeof q === "string") return q || "—";
+  if (typeof q === "object") {
+    const s = (q.start != null) ? q.start : q.quiet_start_h;
+    const e = (q.end != null) ? q.end : q.quiet_end_h;
+    if (s == null && e == null) return "—";
+    return (s != null ? s : "?") + "–" + (e != null ? e : "?");
+  }
+  return String(q);
+}
+function diagCell(tag, text, extraStyle) {
+  return el(tag, { style: "padding:8px 10px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top;" + (extraStyle || ""), text: text });
+}
+function diagBody(diag) {
+  const counts = diag.counts || {};
+  const manifest = fwManifestText(diag.firmware_manifest);
+  const cn = function (v) { return v != null ? String(v) : "?"; };
+
+  const summary = el("div", { class: "card" },
+    el("div", { class: "kicker", text: "system" }),
+    el("div", { class: "badges" },
+      el("span", { class: "tag tag-muted", text: "schema v" + cn(diag.schema_version) }),
+      el("span", { class: "tag tag-muted", text: "firmware manifest " + manifest }),
+      el("span", { class: "tag", text: "devices " + cn(counts.devices) }),
+      el("span", { class: "tag", text: "events " + cn(counts.events) }),
+      el("span", { class: "tag", text: "tokens " + cn(counts.tokens) }),
+      el("span", { class: "tag", text: "battery samples " + cn(counts.battery_samples) })
+    )
+  );
+
+  const devices = Array.isArray(diag.devices) ? diag.devices : [];
+  if (!devices.length) {
+    return el("div", {}, summary, el("div", { style: "height:18px;" }),
+      el("div", { class: "empty" }, el("strong", { text: "No devices" }), el("div", { text: "Nothing registered yet." })));
+  }
+
+  const table = el("table", { class: "mono", style: "width:100%;border-collapse:collapse;font-size:13px;" });
+  const thStyle = "color:var(--muted);font-weight:600;border-bottom:1.5px solid var(--ink);";
+  table.appendChild(el("tr", {},
+    diagCell("th", "device", thStyle),
+    diagCell("th", "online", thStyle),
+    diagCell("th", "firmware", thStyle),
+    diagCell("th", "pending", thStyle),
+    diagCell("th", "quiet hours", thStyle)
+  ));
+  devices.forEach(function (dv) {
+    const drift = dv.fw_current === false;
+    const fwText = (dv.fw != null && dv.fw !== "" ? String(dv.fw) : "unknown") + (drift ? " ⚠ drift" : "");
+    table.appendChild(el("tr", {},
+      diagCell("td", dv.id != null ? String(dv.id) : "?", "font-weight:700;word-break:break-all;"),
+      diagCell("td", dv.online ? "online" : "offline", dv.online ? "color:var(--ok);font-weight:600;" : "color:var(--muted);"),
+      diagCell("td", fwText, drift ? "color:var(--danger);font-weight:700;" : ""),
+      diagCell("td", (dv.pending_action != null && dv.pending_action !== "") ? String(dv.pending_action) : "—"),
+      diagCell("td", fmtQuietHours(dv.quiet_hours))
+    ));
+  });
+
+  const tableCard = el("div", { class: "card", style: "margin-top:18px;overflow:auto;" },
+    el("div", { class: "kicker", text: "devices" }),
+    el("div", { style: "height:8px;" }),
+    table
+  );
+  return el("div", {}, summary, tableCard);
 }
 
 /* ============================================================

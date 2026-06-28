@@ -9,6 +9,8 @@ frozen for v1; any additive change ships as ``pico-paper.v2``.
 
 from __future__ import annotations
 
+import base64
+
 from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -19,11 +21,13 @@ SCHEMA_VERSION = "pico-paper.v1"
 TTL_CAP = 604_800          # 7 days, seconds
 INTERRUPT_DEFAULT_TTL = 300
 QR_DATA_MAX = 512
+IMAGE_MAX_DIM = 128          # image w/h cap (px)
+IMAGE_DATA_MAX = 4096        # base64 chars cap (a 96x96 1-bit bitmap ~ 1.5 KB packed)
 ID_PATTERN = r"^[A-Za-z0-9._:-]+$"
 
 # Frozen layout allowlist. Anything else -> 422.
-LAYOUTS = ("status_card", "alert", "list", "metric", "qr")
-Layout = Literal["status_card", "alert", "list", "metric", "qr"]
+LAYOUTS = ("status_card", "alert", "list", "metric", "qr", "image")
+Layout = Literal["status_card", "alert", "list", "metric", "qr", "image"]
 EventKind = Literal["base", "interrupt"]
 
 
@@ -128,16 +132,46 @@ class QrContent(_Content):
     caption: str = ""
 
 
+class ImageContent(_Content):
+    """A 1-bit bitmap: ``data`` is base64 of ceil(w/8)*h bytes, MONO_HLSB (row-major,
+    MSB = leftmost pixel, a set bit = a black/INK pixel). Rendered centered."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {"title": "Logo", "w": 8, "h": 8, "data": "gYGBgYGBgYE="}
+        },
+    )
+    title: str = ""
+    w: int = Field(ge=1, le=IMAGE_MAX_DIM)
+    h: int = Field(ge=1, le=IMAGE_MAX_DIM)
+    data: str = Field(min_length=1, max_length=IMAGE_DATA_MAX)
+
+    @model_validator(mode="after")
+    def _check_bitmap(self) -> "ImageContent":
+        try:
+            raw = base64.b64decode(self.data, validate=True)
+        except Exception:
+            raise ValueError("image data must be valid base64")
+        stride = (self.w + 7) // 8
+        if len(raw) != stride * self.h:
+            raise ValueError("image data length must equal ceil(w/8)*h bytes")
+        return self
+
+
 CONTENT_MODELS: dict[str, type[_Content]] = {
     "status_card": StatusCardContent,
     "alert": AlertContent,
     "list": ListContent,
     "metric": MetricContent,
     "qr": QrContent,
+    "image": ImageContent,
 }
 
 # A union type alias, handy for callers/tests that want the concrete classes.
-AnyContent = Union[StatusCardContent, AlertContent, ListContent, MetricContent, QrContent]
+AnyContent = Union[
+    StatusCardContent, AlertContent, ListContent, MetricContent, QrContent, ImageContent
+]
 
 
 # --- envelope -------------------------------------------------------------------

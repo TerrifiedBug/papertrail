@@ -176,6 +176,23 @@
                       "caption": "Scan to join GuestNet. Valid for 12 hours."
                     }
                   }
+                },
+                "image": {
+                  "summary": "image event",
+                  "value": {
+                    "schema": "pico-paper.v1",
+                    "id": "evt_example_0001",
+                    "device": "kitchen-01",
+                    "channel": "home.status",
+                    "kind": "base",
+                    "layout": "image",
+                    "content": {
+                      "title": "Logo",
+                      "w": 8,
+                      "h": 8,
+                      "data": "gYGBgYGBgYE="
+                    }
+                  }
                 }
               }
             }
@@ -895,6 +912,57 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/devices/{device_id}/battery": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Battery",
+        "description": "Battery time-series (oldest first) for the dashboard sparkline + a crude\nlinear-fit days-remaining estimate.",
+        "operationId": "admin_battery_api_admin_devices__device_id__battery_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
