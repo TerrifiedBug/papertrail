@@ -980,6 +980,20 @@ def create_app(
             ],
         }
 
+    @app.get("/api/admin/devices/{device_id}/battery", tags=["admin"])
+    async def admin_battery(device_id: str, request: Request, limit: int = 200):
+        """Battery time-series (oldest first) for the dashboard sparkline + a crude
+        linear-fit days-remaining estimate."""
+        _require_admin(request)
+        if store.get_device(device_id) is None:
+            raise HTTPException(status_code=404, detail="unknown device")
+        series = store.battery_series(device_id, limit)
+        return {
+            "id": device_id,
+            "series": [{"at": a, "pct": p, "on_battery": ob} for (a, p, ob) in series],
+            "days_remaining": _days_remaining(series),
+        }
+
     # --- admin API: tokens ------------------------------------------------------
 
     @app.get("/api/admin/tokens", tags=["admin"])
@@ -1140,6 +1154,26 @@ def _quiet_hour(v: Any) -> Optional[int]:
     if not _is_int(v) or not (0 <= v <= 23):
         raise HTTPException(status_code=422, detail="quiet hour must be null or 0..23")
     return v
+
+
+def _days_remaining(series: list[tuple]) -> Optional[float]:
+    """Crude least-squares estimate of days until 0% from the ON-BATTERY discharge
+    trend. None when there's too little discharging data, or it's charging/flat."""
+    pts = [(a, p) for (a, p, ob) in series if ob]
+    if len(pts) < 3:
+        return None
+    t0 = pts[0][0]
+    xs = [a - t0 for (a, _) in pts]
+    ys = [p for (_, p) in pts]
+    n = len(pts)
+    mx, my = sum(xs) / n, sum(ys) / n
+    denom = sum((x - mx) ** 2 for x in xs)
+    if denom == 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom   # pct/sec
+    if slope >= 0:                       # charging / flat -> no estimate
+        return None
+    return round((ys[-1] / -slope) / 86400.0, 1)
 
 
 def _gen_event_id() -> str:
