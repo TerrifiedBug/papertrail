@@ -807,7 +807,7 @@ function deviceCard(d) {
   const caption = el("div", { class: "screen-caption" });
   caption.appendChild(document.createTextNode("showing "));
   caption.appendChild(el("strong", { text: cur.layout }));
-  caption.appendChild(document.createTextNode(" · " + sourceLabel + (cur.priority != null ? " · prio " + cur.priority : "")));
+  caption.appendChild(document.createTextNode(" · " + sourceLabel + (cur.kind ? " · " + cur.kind : "")));
 
   const foot = el("div", { class: "card-foot" },
     el("span", { class: "meta", text: "last seen " + relTime(tel.last_seen_at) }),
@@ -853,8 +853,8 @@ function openSendEvent(d) {
   const channelInput = channels.length
     ? selectEl(channels, channels[0])
     : el("input", { class: "inp", type: "text", placeholder: "channel name" });
-  const prioInput = el("input", { class: "inp", type: "number", value: "100", min: "0", max: "255" });
-  const ttlInput = el("input", { class: "inp", type: "number", value: "", min: "0", placeholder: "blank or 0 = permanent" });
+  const kindSel = selectEl(["base", "interrupt"], "base");
+  const ttlInput = el("input", { class: "inp", type: "number", value: "", min: "0", placeholder: "interrupt: blank = 300s" });
   const idInput = el("input", { class: "inp", type: "text", placeholder: "auto-generated if blank" });
 
   const preview = el("canvas", { class: "epaper", width: "500", height: "244" });
@@ -867,8 +867,8 @@ function openSendEvent(d) {
     el("div", { class: "kicker", text: "live preview" }),
     preview,
     field("Layout", layoutSel),
-    el("div", { class: "two-col" }, field("Channel", channelInput), field("Priority (0–255)", prioInput)),
-    el("div", { class: "two-col" }, field("TTL seconds (blank = permanent)", ttlInput), field("Event id (optional)", idInput)),
+    el("div", { class: "two-col" }, field("Channel", channelInput), field("Kind", kindSel)),
+    el("div", { class: "two-col" }, field("TTL seconds (interrupt only)", ttlInput), field("Event id (optional)", idInput)),
     ed.node,
     errBox,
     el("div", { class: "actions" }, sendBtn)
@@ -882,13 +882,14 @@ function openSendEvent(d) {
     if (!channel) { errBox.textContent = "Channel is required."; return; }
     const payload = {
       channel: channel,
-      priority: Math.max(0, Math.min(255, Math.round(Number(prioInput.value) || 0))),
+      kind: kindSel.value,
       layout: layoutSel.value,
       content: ed.read()
     };
     const ttlRaw = (ttlInput.value || "").trim();
     const ttl = ttlRaw === "" ? 0 : Math.max(0, Math.round(Number(ttlRaw) || 0));
-    if (ttl > 0) payload.ttl_seconds = ttl;   // omit => sticky (no expiry)
+    // base persists (ignores ttl); interrupt uses ttl (server defaults 300s when blank)
+    if (kindSel.value === "interrupt" && ttl > 0) payload.ttl_seconds = ttl;
     const id = (idInput.value || "").trim();
     if (id) payload.id = id;
     sendBtn.disabled = true;
@@ -961,7 +962,7 @@ async function loadEventList(d, listWrap) {
     const tags = el("div", { class: "badges", style: "margin:4px 0 0;" },
       el("span", { class: "tag tag-muted", text: ev.layout }),
       el("span", { class: "tag tag-muted", text: "ch " + ev.channel }),
-      el("span", { class: "tag tag-muted", text: "prio " + ev.priority }),
+      el("span", { class: "tag tag-muted", text: ev.kind || "base" }),
       el("span", { class: "tag" + (ev.expired ? " tag-danger" : ""),
         text: ev.expired ? "expired" : (ev.expires_at == null ? "permanent" : inFromNow(ev.expires_at)) })
     );
