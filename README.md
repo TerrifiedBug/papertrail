@@ -6,16 +6,16 @@ device; a Raspberry Pi Pico W with a Waveshare 2.13" e-paper HAT wakes every two
 minutes, asks "what should I show?", and goes back to sleep. The display holds the
 last image at **zero power**, so the tag can run for weeks on a small LiPo.
 
-- **For AI agents:** [`docs/for-agents.md`](docs/for-agents.md) — hand this to your coding agent to build a "send a screen to papertrail" skill.
-- **Wire contract:** [`SCHEMA.md`](SCHEMA.md) — the frozen `pico-paper.v1` envelope.
-- **Pixel geometry:** [`docs/layout-specs.md`](docs/layout-specs.md) — exact regions for the 250x122 panel.
-- **Operations:** [`docs/deploy.md`](docs/deploy.md) — run the bridge, mint tokens, push events.
-- **Security:** [`docs/security.md`](docs/security.md) — threat model + what's implemented vs. out of scope.
-- **Dashboard:** [`docs/dashboard.md`](docs/dashboard.md) — the LAN-only admin web UI (devices, tokens, live preview).
-- **Flashing:** [`docs/flashing.md`](docs/flashing.md) — provision a Pico over USB from the browser (config + firmware upload).
-- **OTA:** [`docs/ota.md`](docs/ota.md) — over-the-air firmware updates: manifest, delta pull, atomic write, rollback.
-- **MCP server:** [`mcp/`](mcp/) — wraps the ingest API as an MCP `send_screen` tool so an agent can push screens natively.
-- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md) — shipped + what's next.
+- **For AI agents:** [`docs/for-agents.md`](docs/for-agents.md). Hand this to your coding agent to build a "send a screen to papertrail" skill.
+- **Wire contract:** [`SCHEMA.md`](SCHEMA.md). The frozen `pico-paper.v1` envelope.
+- **Pixel geometry:** [`docs/layout-specs.md`](docs/layout-specs.md). Exact regions for the 250x122 panel.
+- **Operations:** [`docs/deploy.md`](docs/deploy.md). Run the bridge, mint tokens, push events.
+- **Security:** [`docs/security.md`](docs/security.md). Threat model plus what's implemented versus out of scope.
+- **Dashboard:** [`docs/dashboard.md`](docs/dashboard.md). The LAN-only admin web UI (devices, tokens, live preview).
+- **Flashing:** [`docs/flashing.md`](docs/flashing.md). Provision a Pico over USB from the browser (config + firmware upload).
+- **OTA:** [`docs/ota.md`](docs/ota.md). Over-the-air firmware updates: manifest, delta pull, atomic write, rollback.
+- **MCP server:** [`mcp/`](mcp/). Wraps the ingest API as an MCP `send_screen` tool so an agent can push screens natively.
+- **Roadmap:** [`docs/roadmap.md`](docs/roadmap.md). Shipped plus what's next.
 
 ---
 
@@ -35,10 +35,10 @@ ETag of whatever it's currently showing in `If-None-Match`, and either gets a
 render. Six fixed layouts cover most "tell me one thing" use cases:
 `status_card | alert | list | metric | qr | image`.
 
-There are no buttons and nothing is interactive — checkboxes in the `list` layout
+There are no buttons and nothing is interactive; checkboxes in the `list` layout
 are decorative. QR codes are generated **on-device** from a short string (no image
-fetch); the only bitmap that ever crosses the wire is the optional `image` layout's
-small 1-bit blob (base64, capped) — there is still no external image fetch.
+fetch). The only bitmap that ever crosses the wire is the optional `image` layout's
+small 1-bit blob (base64, capped), and even that is never fetched from an external URL.
 
 ---
 
@@ -88,13 +88,13 @@ another source: a daily cron that POSTs a summary event (see
 
 ## Remote control & telemetry
 
-Two small additions on the device's own read path (both **additive** to
-`pico-paper.v1`; the `schema` string is unchanged and old firmware ignores them):
+These additions live on the device's own read path. They are all **additive** to
+`pico-paper.v1`: the `schema` string is unchanged and old firmware ignores them.
 
-- **Remote poll interval.** `GET .../current` now returns a top-level
+- **Remote poll interval.** `GET .../current` returns a top-level
   `"control": {"poll_interval": N}` block (seconds). Change it with
   `PATCH /api/devices/:id/config` (body `{"poll_interval": N}`, **device** token,
-  server-clamped to `[30, 3600]`); the Pico applies it on its next poll — no
+  server-clamped to `[30, 3600]`); the Pico applies it on its next poll, no
   reflash. `poll_interval` is folded into the ETag, so a change busts the `304`
   exactly once.
 - **Telemetry piggybacked on the poll.** The Pico tacks optional
@@ -106,13 +106,14 @@ Two small additions on the device's own read path (both **additive** to
 - **One-shot device actions.** The admin API can queue a `reboot` / `clear` /
   `force_full_refresh` for a device (`POST /api/admin/devices/:id/action`). It
   rides the next poll's `control` block and its token is folded into the ETag, so
-  it reaches a device even on a `304`; it is **deliver-once** (cleared on the `200`
+  it reaches a device even on a `304`. It is **deliver-once** (cleared on the `200`
   that carries it), so it never loops.
 - **Per-event render hints.** An event may set `invert` / `full_refresh`; they
   surface in a top-level `hints` block (and the ETag, when set). `full_refresh` is
   a no-op on the always-full-refresh tri-color panel.
 - **Quiet hours.** A device can carry a quiet-hours window; inside it the bridge
-  stretches the poll interval (server-computed, so the clock-less Pico is unchanged).
+  stretches the poll interval. This is server-computed, so the clock-less Pico is
+  unchanged.
 
 Full field rules and curl examples: [`SCHEMA.md` §4](SCHEMA.md) and
 [`docs/deploy.md`](docs/deploy.md#remote-poll-interval--telemetry). The LAN-only
@@ -150,7 +151,7 @@ sets, so they stack without collision):
 | UPS SDA | GP6 | I2C1 |
 | UPS SCL | GP7 | I2C1 |
 
-Display set `{8,9,10,11,12,13}` is disjoint from UPS set `{6,7}` — confirmed no
+Display set `{8,9,10,11,12,13}` is disjoint from UPS set `{6,7}`, confirmed no
 conflict. The shipped panel uses the **vendored official Waveshare Landscape
 driver** (`firmware/epaper2in13b.py`, with a `miso=None` fix so SPI1 never claims
 GP8/DC); do not hand-roll the panel init. Select it with `EPAPER_MODEL = "2.13-B"`.
@@ -164,14 +165,14 @@ battery math in
 The tri-color panel and battery behavior are driven by a few knobs in
 [`firmware/config.py`](firmware/config.py):
 
-- **`EPAPER_MODEL`** — `"2.13-B"` selects the tri-color B V4 driver (red plane
+- **`EPAPER_MODEL`.** `"2.13-B"` selects the tri-color B V4 driver (red plane
   enabled); `"2.13"` selects the mono driver, where `EPAPER_REV` then picks
   `"V4"`/`"V3"`.
-- **`EPAPER_Y_OFFSET`** — shifts **all** rendered content down to clear the panel's
+- **`EPAPER_Y_OFFSET`.** Shifts **all** rendered content down to clear the panel's
   hidden top rows (128px RAM vs 122px visible). Shipped at `6`; applied to both
-  planes in `render.FrameCanvas`. It is a per-panel calibration knob — tune it on
+  planes in `render.FrameCanvas`. It is a per-panel calibration knob, so tune it on
   hardware (see `firmware/test_offset.py`).
-- **`POWER_AUTO_SLEEP`** — when `True`, the firmware reads the INA219 shunt-current
+- **`POWER_AUTO_SLEEP`.** When `True`, the firmware reads the INA219 shunt-current
   **direction** each cycle and picks the sleep mode: on battery (discharging) ->
   `machine.deepsleep` (max runtime; the board resets each wake, so the last ETag +
   poll interval are persisted to flash); plugged/charging -> `machine.lightsleep`
@@ -180,10 +181,10 @@ The tri-color panel and battery behavior are driven by a few knobs in
   deepsleep tell-tale: the `up=` uptime resets to a small number every poll). When
   `False`, the fixed `USE_DEEPSLEEP` is used.
 
-**Tri-color refresh is full-refresh only** (~5-10s, with a flashing/fade waveform —
-this is NORMAL, not a fault). There is no partial/fast refresh for tri-color, and
+**Tri-color refresh is full-refresh only** (~5-10s, with a flashing/fade waveform
+that is NORMAL, not a fault). There is no partial/fast refresh for tri-color, and
 red-vs-no-red makes no speed difference (the full waveform runs regardless). The
-panel only refreshes when content actually **changes** — a `304` poll skips the
+panel only refreshes when content actually **changes**; a `304` poll skips the
 panel entirely (zero flash, zero power, image retained).
 
 ---
@@ -195,7 +196,7 @@ panel entirely (zero flash, zero power, image retained).
 
 ### 1. Provision devices + tokens (`seed.json`)
 
-Devices and tokens live in a `seed.json` the bridge reads on first run — it stores
+Devices and tokens live in a `seed.json` the bridge reads on first run; it stores
 only each token's `sha256`. Mint strong tokens and drop them in (start from
 [`server/seed.example.json`](server/seed.example.json)):
 
@@ -268,11 +269,11 @@ curl -sS https://paper.example.com/api/devices/kitchen-01/current \
 ## Layout gallery
 
 Six frozen layouts, drawn to the 250x122 panel (black-only except `alert`'s red
-banner — see below). Geometry is exact in
+banner, described below). Geometry is exact in
 [`docs/layout-specs.md`](docs/layout-specs.md); ready-to-POST bodies live in
 [`docs/payloads/`](docs/payloads/). ASCII mocks below (boxes ~ the 250x122 frame):
 
-### `status_card` — heading, status badge, body lines, footer
+### `status_card`: heading, status badge, body lines, footer
 
 ```
 +------------------------------------------------+
@@ -289,7 +290,7 @@ banner — see below). Geometry is exact in
 +------------------------------------------------+
 ```
 
-### `alert` — severity banner; `high` inverts + frames the whole screen
+### `alert`: severity banner; `high` inverts + frames the whole screen
 
 ```
    low / med (normal banner)              high (inverted + 2px frame)
@@ -311,7 +312,7 @@ high-severity alert is the one screen that shows red; on a mono panel `canvas.re
 folds onto black (an inverted-black banner, unchanged). All other layouts are
 black-only. Message wraps to 4 lines @ 30 chars.
 
-### `list` — title + decorative checklist (non-interactive)
+### `list`: title + decorative checklist (non-interactive)
 
 ```
 +------------------------------------------------+
@@ -327,7 +328,7 @@ black-only. Message wraps to 4 lines @ 30 chars.
 +------------------------------------------------+
 ```
 
-### `metric` — one big number, unit, trend
+### `metric`: one big number, unit, trend
 
 ```
 +------------------------------------------------+
@@ -344,7 +345,7 @@ black-only. Message wraps to 4 lines @ 30 chars.
 `value` is a **string** (e.g. `"3.42"`) so formatting is preserved; value+unit are
 centered as one group.
 
-### `qr` — on-device QR + caption
+### `qr`: on-device QR + caption
 
 ```
 +------------------------------------------------+
@@ -359,7 +360,7 @@ centered as one group.
 Only `qr_data` (<= 512 chars) is transmitted; the Pico encodes it locally with the
 vendored `uQR` MicroPython library. No image fetch, ever.
 
-### `image` — inline 1-bit bitmap (icons, logos, agent glyphs)
+### `image`: inline 1-bit bitmap (icons, logos, agent glyphs)
 
 ```
 +------------------------------------------------+
@@ -371,10 +372,10 @@ vendored `uQR` MicroPython library. No image fetch, ever.
                   # ##  ##                           ceil(w/8)*h bytes
 +------------------------------------------------+
 ```
-`content` is `{ "title"?, "w":1..128, "h":1..128, "data": base64 }` — a 1-bit
+`content` is `{ "title"?, "w":1..128, "h":1..128, "data": base64 }`, a 1-bit
 MONO_HLSB bitmap (MSB = leftmost pixel, set bit = INK), rendered centered. The
-server checks `len(decode(data)) == ceil(w/8)*h` (else `422`). The only bitmap on
-the wire; no external fetch.
+server checks `len(decode(data)) == ceil(w/8)*h` (else `422`). It is the only bitmap
+on the wire, and is never fetched from an external URL.
 
 ---
 
