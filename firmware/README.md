@@ -143,9 +143,12 @@ mpremote mkdir lib ; mpremote cp lib/uQR.py :lib/uQR.py
   - `200` changed: render the new layout (full refresh), store the new ETag.
   - error / wifi-down: render the offline screen.
 - Low battery (`pct <= low_pct`): the battery badge turns **red** (tri-color
-  panels) over the normal content, and the cadence stretches to
-  `LOW_BATT_INTERVAL_S` (default 600 s) instead of `POLL_INTERVAL_S` (default
-  120 s). Crossing the threshold forces one redraw even on an unchanged screen.
+  panels) over the normal content, and the cadence stretches to the low-battery
+  interval (default 600 s) instead of `POLL_INTERVAL_S` (default 120 s). Crossing
+  the threshold forces one redraw even on an unchanged screen. Both `low_pct` and
+  the low-battery interval are **server-tunable** via the response control block
+  (clamped, flash-persisted in `batt_settings.json`); the `config.BATTERY` values
+  are just the defaults until the server sends its own.
 - Critically low (`pct <= 1`, hardcoded `main.CRITICAL_PCT`): full-screen
   "Battery low" takeover that also **skips the radio** to preserve the last of
   the runtime — the only case where the screen is fully replaced.

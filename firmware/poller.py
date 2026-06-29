@@ -28,6 +28,12 @@ SCHEMA_VERSION = "pico-paper.v1"
 POLL_INTERVAL_MIN_S = 30
 POLL_INTERVAL_MAX_S = 3600
 
+# Safe band for the server-supplied control.low_pct (battery-warn threshold). Must
+# stay above the firmware's hardcoded 1% critical takeover. low_batt_interval reuses
+# the poll-interval band. clamp_interval() is a generic int-clamp despite its name.
+LOW_PCT_MIN = 2
+LOW_PCT_MAX = 95
+
 # Telemetry `fw` charset (mirrors the server's [A-Za-z0-9._-]); anything else is
 # stripped so a stray char can't malform the query string.
 _FW_OK = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -132,8 +138,8 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
         # (both None here -- no body to read) so callers never KeyError on a path.
         return {"action": "offline", "etag": last_etag, "screen": None,
                 "error": "request failed: " + str(e),
-                "poll_interval": None, "control_fw": None,
-                "control_action": None, "hints": None}
+                "poll_interval": None, "low_pct": None, "low_batt_interval": None,
+                "control_fw": None, "control_action": None, "hints": None}
 
     body = None
     error = None
@@ -164,12 +170,16 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
     # learns the new fw on the next 200 (the bridge folds fw into the ETag so an fw
     # bump forces a 200). control.fw drives the OTA trigger in main.cycle().
     interval = None
+    low_pct = None
+    low_batt_interval = None
     control_fw = None
     control_action = None
     hints = body.get("hints") if isinstance(body, dict) else None
     control = body.get("control") if isinstance(body, dict) else None
     if isinstance(control, dict):
         interval = clamp_interval(control.get("poll_interval"))
+        low_pct = clamp_interval(control.get("low_pct"), LOW_PCT_MIN, LOW_PCT_MAX)
+        low_batt_interval = clamp_interval(control.get("low_batt_interval"))
         fw = control.get("fw")
         if fw is not None:
             control_fw = str(fw)
@@ -181,11 +191,13 @@ def poll(base_url, device_id, token, last_etag, telemetry=None):
         # 200 but unparseable body -> treat as offline rather than render garbage.
         return {"action": "offline", "etag": last_etag, "screen": None,
                 "error": error or "empty body", "poll_interval": interval,
+                "low_pct": low_pct, "low_batt_interval": low_batt_interval,
                 "control_fw": control_fw, "control_action": control_action,
                 "hints": hints}
 
     return {"action": action, "etag": etag,
             "screen": body if action == "render" else None,
             "error": error if action == "offline" else None,
-            "poll_interval": interval, "control_fw": control_fw,
+            "poll_interval": interval, "low_pct": low_pct,
+            "low_batt_interval": low_batt_interval, "control_fw": control_fw,
             "control_action": control_action, "hints": hints}

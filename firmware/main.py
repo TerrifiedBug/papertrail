@@ -113,6 +113,36 @@ def save_interval(seconds):
         pass
 
 
+# --- flash-backed battery knobs (server-tuned; survive deepsleep reset) ----------
+# low_pct (badge-red threshold) + low_batt_interval (low cadence) come down in the
+# response control block, like poll_interval. Persisted so a deepsleep wake honours
+# the last server value on the pre-poll battery check before the radio is even up.
+def load_batt_settings():
+    """Persisted {low_pct, low_batt_interval}, else the config defaults."""
+    d = {"low_pct": config.BATTERY["low_pct"],
+         "low_batt_interval": config.LOW_BATT_INTERVAL_S}
+    try:
+        import json
+        with open(config.BATT_SETTINGS_FILE) as f:
+            saved = json.load(f)
+        for k in d:
+            if isinstance(saved.get(k), int):
+                d[k] = saved[k]
+    except Exception:
+        pass
+    return d
+
+
+def save_batt_settings(d):
+    try:
+        import json
+        with open(config.BATT_SETTINGS_FILE, "w") as f:
+            json.dump({"low_pct": int(d["low_pct"]),
+                       "low_batt_interval": int(d["low_batt_interval"])}, f)
+    except Exception:
+        pass
+
+
 # --- crash-loop counter (boot.py's recovery guard increments it each boot) ------
 def load_boot_count():
     try:
@@ -146,15 +176,16 @@ def _uptime_s():
         return 0
 
 
-def read_battery():
-    """Return (pct, is_low, on_battery). (None, False, False) if unreadable."""
+def read_battery(low_pct):
+    """Return (pct, is_low, on_battery). (None, False, False) if unreadable.
+    `low_pct` is the effective (server-tunable) badge-red threshold."""
     try:
         import ina219
         sensor = ina219.INA219.from_config(config.BATTERY)
         v = sensor.bus_voltage()
         curve = config.BATTERY.get("curve") or getattr(ina219, "DEFAULT_LIPO_CURVE", None)
         pct = ina219.voltage_to_pct(v, config.BATTERY["v_min"], config.BATTERY["v_max"], curve)
-        low = ina219.is_low(pct, config.BATTERY["low_pct"])
+        low = ina219.is_low(pct, low_pct)
         sh = sensor.shunt_mv()
         on_batt = ina219.is_on_battery(sh, config.BATTERY.get("charge_sign", 1),
                                        config.BATTERY.get("power_threshold_mv", 2.0))
@@ -196,20 +227,27 @@ def _use_deepsleep(on_battery):
     return config.USE_DEEPSLEEP
 
 
-def cycle(panel, last_etag, interval_pref):
+def cycle(panel, last_etag, interval_pref, batt_pref):
     """Run one poll/render cycle.
 
     Returns (new_etag, sleep_seconds, new_interval_pref, use_deepsleep). `interval_pref`
     is the persisted NORMAL cadence (server-tunable via the response control block); a
     low battery overrides it for one sleep without changing the stored preference. The
     sleep MODE is chosen per cycle from the power source (deepsleep on battery).
+
+    `batt_pref` is a MUTABLE {low_pct, low_batt_interval} dict (server-tunable, flash-
+    persisted); this cycle reads it for the pre-poll battery check and updates it IN
+    PLACE from the response control block, so the caller persists it without a return.
+    A server change takes effect on the NEXT cycle (this cycle already read the values).
     """
     secrets = _secrets()
+    low_pct = batt_pref["low_pct"]
+    low_batt_interval = batt_pref["low_batt_interval"]
 
     # 1. Battery + power source (no radio needed). A low battery reddens the badge
     # (handled below in the render path) and stretches the sleep cadence, but no
     # longer skips the poll or takes over the screen -- UNLESS it's critically low.
-    pct, low, on_battery = read_battery()
+    pct, low, on_battery = read_battery(low_pct)
     use_deep = _use_deepsleep(on_battery)
 
     # Critically low: take over the screen and skip the radio to preserve runtime.
@@ -217,10 +255,10 @@ def cycle(panel, last_etag, interval_pref):
         if last_etag != LOWBATT_SENTINEL:
             panel.draw(render.draw_low_battery, pct)
             save_etag(LOWBATT_SENTINEL)
-        return LOWBATT_SENTINEL, config.LOW_BATT_INTERVAL_S, interval_pref, use_deep
+        return LOWBATT_SENTINEL, low_batt_interval, interval_pref, use_deep
 
     def low_sleep(pref):
-        return config.LOW_BATT_INTERVAL_S if low else pref
+        return low_batt_interval if low else pref
 
     base_etag, was_low = _split_low(last_etag)
     # Leaving a sentinel screen -- or crossing the low-battery threshold (badge
@@ -277,6 +315,13 @@ def cycle(panel, last_etag, interval_pref):
     new_pref = interval_pref
     if result.get("poll_interval") is not None:
         new_pref = result["poll_interval"]
+
+    # Server-tuned battery knobs (poller already clamped). Mutated in place so the
+    # caller persists them; takes effect on the next cycle's battery check.
+    if result.get("low_pct") is not None:
+        batt_pref["low_pct"] = result["low_pct"]
+    if result.get("low_batt_interval") is not None:
+        batt_pref["low_batt_interval"] = result["low_batt_interval"]
 
     # One-shot device action (queued by the bridge, delivered+cleared server-side;
     # we just execute). reboot/clear are handled here; force_full_refresh needs no
@@ -342,12 +387,15 @@ def main():
     panel = Panel(epd_drv.get_epd())
     last_etag = load_etag()
     interval_pref = load_interval()      # server-tuned normal cadence (persisted)
+    batt_pref = load_batt_settings()     # server-tuned low_pct + low_batt_interval
 
     while True:
         prev_pref = interval_pref
+        prev_batt = dict(batt_pref)      # snapshot: cycle() mutates batt_pref in place
         cycle_ok = False
         try:
-            last_etag, sleep_s, interval_pref, use_deep = cycle(panel, last_etag, interval_pref)
+            last_etag, sleep_s, interval_pref, use_deep = cycle(
+                panel, last_etag, interval_pref, batt_pref)
             cycle_ok = True
         except Exception as e:
             # A cycle() crash must ADVANCE the recovery path, not retry forever in
@@ -375,6 +423,9 @@ def main():
         # Persist the cadence only when the server actually changed it (flash wear).
         if interval_pref != prev_pref:
             save_interval(interval_pref)
+        # Same for the battery knobs (cycle() mutated batt_pref in place).
+        if batt_pref != prev_batt:
+            save_batt_settings(batt_pref)
 
         panel.rest()                     # zero-power; image is retained
         sleep(sleep_s, use_deep)

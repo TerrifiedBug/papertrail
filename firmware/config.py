@@ -53,6 +53,7 @@ POWER_AUTO_SLEEP = True
 
 ETAG_FILE = "last_etag.txt"          # tiny flash backstop for the last seen ETag
 INTERVAL_FILE = "poll_interval.txt"  # flash backstop for the server-tuned cadence
+BATT_SETTINGS_FILE = "batt_settings.json"  # backstop for server-tuned low_pct + low_batt_interval
 
 # --------------------------------------------------------------------------
 # OTA (over-the-air firmware update) -- see ota.py + boot.py.
@@ -125,8 +126,9 @@ BATTERY = {
     "addr":     0x43,             # INA219 address on the UPS-B
     "v_min":    3.0,              # volts at 0%  (LiPo rough-linear; calibrate per cell)
     "v_max":    4.2,              # volts at 100%
-    "low_pct":  15,               # <= this -> red battery badge + LOW_BATT_INTERVAL_S
-                                  # (<=1% is a hardcoded critical full-screen takeover)
+    "low_pct":  15,               # <= this -> red battery badge + LOW_BATT_INTERVAL_S.
+                                  # DEFAULT only -- the server can override per-device via
+                                  # the control block. (<=1% is a hardcoded critical takeover.)
     # Voltage->% discharge curve: ascending (volts, pct) points, piecewise-linear.
     # The calibration knob -- a real LiPo curve is flat in the middle, so the linear
     # v_min..v_max map reads badly there. Measure your pack's resting voltage at known

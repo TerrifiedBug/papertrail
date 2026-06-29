@@ -54,7 +54,9 @@ queue on the bridge and reach the device on its **next poll** (deliver-once, and
 bust a `304` so they land even on an otherwise-unchanged screen). You can also **send a
 test event** (a layout composer for all 6 layouts incl. `image`, with a live preview and
 **invert / full-refresh** render-hint checkboxes), **set the poll interval**
-(`PATCH /config`, clamped 30–3600s), edit a device's **quiet-hours** window (start/end
+(`PATCH /config`, clamped 30–3600s), tune the **battery thresholds** (low-battery % at
+which the badge turns red, clamped 2–95, plus the low-battery poll cadence — both pushed
+to the device in the control block), edit a device's **quiet-hours** window (start/end
 hour, blank = off; inside it the bridge stretches the poll interval), and open an
 **events drawer** — recent events with channel/kind/expiry; **click any event to expand
 it to its raw payload + a rendered ePaper preview** of that screen, and each is deletable

@@ -1,5 +1,5 @@
 {
-  "_comment": "Canonical device config. Server owns: channels, fallback, poll_interval_s, low_batt_interval_s. Pico owns local-only knobs: server_url + tokens come from secrets (never committed), epaper_rev, battery.*. See SCHEMA.md sec 7 and docs/layout-specs.md sec 6.",
+  "_comment": "Canonical device config. Server owns: channels, fallback, poll_interval_s, low_batt_interval_s, low_pct (all pushed via the response control block). Pico owns local-only knobs: server_url + tokens come from secrets (never committed), epaper_rev, battery.* hardware calibration. battery.low_pct here is only the firmware DEFAULT -- the server value overrides it. See SCHEMA.md sec 7 and docs/layout-specs.md sec 6.",
 
   "id": "kitchen-01",
   "channels": [
@@ -23,6 +23,7 @@
 
   "poll_interval_s": 120,
   "low_batt_interval_s": 600,
+  "low_pct": 15,
 
   "firmware": {
     "_comment": "Local-only Pico knobs. server_url and the device bearer token live in secrets.example.py, NOT here.",

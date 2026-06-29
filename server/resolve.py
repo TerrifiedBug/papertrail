@@ -98,7 +98,7 @@ class Resolution:
     content: dict[str, Any]
     source_event_id: Optional[str]   # None when fallback
     etag: str
-    control: Optional[dict[str, Any]] = None   # {"poll_interval": N, "fw"?, "action"?}
+    control: Optional[dict[str, Any]] = None   # {"poll_interval": N, "low_pct": N, "low_batt_interval": N, "fw"?, "action"?}
     received_at: Optional[int] = None          # epoch the winning event was ingested
     kind: Optional[str] = None        # None when fallback
     hints: Optional[dict[str, Any]] = None     # {"invert", "full_refresh"} or None
@@ -154,7 +154,13 @@ def resolve_from_events(
     # etag_control is hashed (a change busts the 304); a queued one-shot `action`
     # is hashed too so it reaches a device otherwise stuck on 304. fw rides
     # ALONGSIDE but is NOT hashed (a firmware bump must not churn the 304 cache).
-    etag_control: dict[str, Any] = {"poll_interval": interval}
+    # Battery knobs ride alongside poll_interval and ARE hashed -- a change busts
+    # the 304 so the device re-fetches and applies the new threshold/cadence.
+    etag_control: dict[str, Any] = {
+        "poll_interval": interval,
+        "low_pct": device.low_pct,
+        "low_batt_interval": device.low_batt_interval_s,
+    }
     if action:
         etag_control["action"] = action
     control = etag_control if fw_version is None else {**etag_control, "fw": fw_version}

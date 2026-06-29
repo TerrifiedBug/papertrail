@@ -318,6 +318,30 @@ def test_admin_config_unknown_key_422(admin_ctx):
     assert r.status_code == 422
 
 
+def test_admin_patch_low_pct_clamps_and_persists(admin_ctx):
+    # low_pct must clamp into [2,95] -- 1 would collide with the firmware's hardcoded
+    # 1% critical takeover.
+    lo = admin_ctx.client.patch(f"{DEVICES}/{DEVICE_ID}", headers=admin_bearer(),
+                                json={"low_pct": 1})
+    assert lo.status_code == 200 and lo.json()["low_pct"] == 2
+    hi = admin_ctx.client.patch(f"{DEVICES}/{DEVICE_ID}", headers=admin_bearer(),
+                                json={"low_pct": 100})
+    assert hi.status_code == 200 and hi.json()["low_pct"] == 95
+    d = admin_ctx.client.get(DEVICES, headers=admin_bearer()).json()["devices"][0]
+    assert d["low_pct"] == 95
+
+
+def test_admin_device_dict_exposes_quiet_hours_and_low_pct(admin_ctx):
+    # Regression: the edit modal reads these back off the dashboard device dict.
+    # When they were omitted, saved quiet hours appeared blank on reopen (looked
+    # like the save was lost) and re-saving wiped them.
+    admin_ctx.client.patch(f"{DEVICES}/{DEVICE_ID}/config", headers=admin_bearer(),
+                           json={"quiet_start_h": 22, "quiet_end_h": 7})
+    d = admin_ctx.client.get(DEVICES, headers=admin_bearer()).json()["devices"][0]
+    assert d["quiet_start_h"] == 22 and d["quiet_end_h"] == 7
+    assert "low_pct" in d
+
+
 # --- tokens: mint (plaintext once, hash only) + list + revoke ------------------
 
 
