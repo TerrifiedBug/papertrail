@@ -142,8 +142,10 @@ mpremote mkdir lib ; mpremote cp lib/uQR.py :lib/uQR.py
     (zero flash, image retained).
   - `200` changed: render the new layout (full refresh), store the new ETag.
   - error / wifi-down: render the offline screen.
-- Low battery (`pct <= low_pct`): low-battery screen + `LOW_BATT_INTERVAL_S`
-  (default 600 s) instead of `POLL_INTERVAL_S` (default 120 s).
+- Low battery (`pct <= low_pct`): the battery badge turns **red** (tri-color
+  panels) over the normal content, and the cadence stretches to
+  `LOW_BATT_INTERVAL_S` (default 600 s) instead of `POLL_INTERVAL_S` (default
+  120 s). Crossing the threshold forces one redraw even on an unchanged screen.
 - **Auto power-aware sleep** (`config.POWER_AUTO_SLEEP=True`, the default): each
   cycle reads the INA219 shunt-current DIRECTION and picks the sleep mode — on
   battery (discharging) -> `machine.deepsleep` (max runtime; the board resets each

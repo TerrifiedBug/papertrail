@@ -26,6 +26,7 @@ import ina219
 import poller
 import render
 import ota
+import main as fw_main          # aliased: this file defines its own main() runner
 
 INK = render.INK
 PAPER = render.PAPER
@@ -137,10 +138,21 @@ def test_draw_battery():
     ce = RecordingCanvas(); ce.red = ce
     render.draw_battery(ce, 0, True)
     assert not any(o[0] == "rect" and o[1] == 228 and o[2] == 113 for o in ce.ops), "0% -> no fill bar"
-    # low -> drawn on the red plane (here red aliases the same recorder)
-    cl = RecordingCanvas(); cl.red = cl
+    # low -> the percent label is drawn on the RED plane, not the black canvas
+    cl = RecordingCanvas(); red = RecordingCanvas(); cl.red = red
     render.draw_battery(cl, 40, True, low=True)
-    assert cl.has_text("40", color=INK), "low badge still renders"
+    assert red.has_text("40", color=INK), "low badge renders on the red plane"
+    assert not cl.has_text("40"), "low badge label not on the black plane"
+
+
+def test_split_low():
+    # round-trips the low-battery ETag marker used to force a badge redraw on a
+    # threshold crossing (firmware.main._split_low)
+    assert fw_main._split_low('W/"abc"') == ('W/"abc"', False), "plain etag -> not low"
+    assert fw_main._split_low('W/"abc"|low') == ('W/"abc"', True), "marker -> low + base"
+    assert fw_main._split_low("") == ("", False), "empty -> not low"
+    assert fw_main._split_low(fw_main.OFFLINE_SENTINEL) == (fw_main.OFFLINE_SENTINEL, False), \
+        "sentinel survives the split"
 
 
 def test_on_battery_detection():
@@ -568,6 +580,7 @@ def test_invert_xors_black_plane():
 TESTS = [
     test_battery_curve,
     test_draw_battery,
+    test_split_low,
     test_etag_decision,
     test_poll_interval_clamp,
     test_schema_version_guard,

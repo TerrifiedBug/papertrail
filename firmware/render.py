@@ -313,16 +313,6 @@ def render_offline(canvas, detail=""):
     })
 
 
-def render_low_battery(canvas, pct):
-    render_metric(canvas, {
-        "label": "Battery low",
-        "value": str(pct),
-        "unit": "%",
-        "trend": "CHARGE SOON",
-        "footer": "papertrail",
-    })
-
-
 # --------------------------------------------------------------------------
 # Device canvas -- wraps the Waveshare epd framebuffer (needs `framebuf`).
 # --------------------------------------------------------------------------
@@ -451,9 +441,4 @@ def draw_blank(epd):
 
 def draw_offline(epd, detail=""):
     render_offline(_prep(epd), detail)
-    _push(epd)
-
-
-def draw_low_battery(epd, pct):
-    render_low_battery(_prep(epd), pct)
     _push(epd)
