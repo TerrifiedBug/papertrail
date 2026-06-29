@@ -44,13 +44,16 @@ except ImportError:                  # host (py_compile / import) -- stdlib time
 # Sentinel stored in place of a real ETag so we don't redraw an unchanged
 # offline screen every wake.
 OFFLINE_SENTINEL = "__offline__"
-LOWBATT_SENTINEL = "__lowbatt__"   # legacy: only honoured when read from flash on upgrade
+LOWBATT_SENTINEL = "__lowbatt__"   # critical-battery takeover screen is up
 
-# A low battery no longer takes over the screen -- it reddens the badge on the
-# normal content. The badge colour must flip the moment we cross the threshold,
-# even when the server would 304, so the low state rides the persisted ETag as a
-# trailing marker; a transition busts it and forces one redraw.
+# Two-stage low battery:
+#  - `low` (config BATTERY["low_pct"]): reddens the badge on the NORMAL content
+#    (the badge colour rides the ETag via LOW_TAG; a threshold crossing forces one
+#    redraw even on a 304, else the warning wouldn't appear until the next change).
+#  - CRITICAL_PCT (hardcoded floor): take over the whole screen AND skip the radio
+#    to wring out the last of the runtime. The only time the screen is replaced.
 LOW_TAG = "|low"
+CRITICAL_PCT = 1
 
 
 def _split_low(stored):
@@ -205,9 +208,16 @@ def cycle(panel, last_etag, interval_pref):
 
     # 1. Battery + power source (no radio needed). A low battery reddens the badge
     # (handled below in the render path) and stretches the sleep cadence, but no
-    # longer skips the poll or takes over the screen.
+    # longer skips the poll or takes over the screen -- UNLESS it's critically low.
     pct, low, on_battery = read_battery()
     use_deep = _use_deepsleep(on_battery)
+
+    # Critically low: take over the screen and skip the radio to preserve runtime.
+    if pct is not None and pct <= CRITICAL_PCT:
+        if last_etag != LOWBATT_SENTINEL:
+            panel.draw(render.draw_low_battery, pct)
+            save_etag(LOWBATT_SENTINEL)
+        return LOWBATT_SENTINEL, config.LOW_BATT_INTERVAL_S, interval_pref, use_deep
 
     def low_sleep(pref):
         return config.LOW_BATT_INTERVAL_S if low else pref

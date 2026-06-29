@@ -126,6 +126,7 @@ BATTERY = {
     "v_min":    3.0,              # volts at 0%  (LiPo rough-linear; calibrate per cell)
     "v_max":    4.2,              # volts at 100%
     "low_pct":  15,               # <= this -> red battery badge + LOW_BATT_INTERVAL_S
+                                  # (<=1% is a hardcoded critical full-screen takeover)
     # Voltage->% discharge curve: ascending (volts, pct) points, piecewise-linear.
     # The calibration knob -- a real LiPo curve is flat in the middle, so the linear
     # v_min..v_max map reads badly there. Measure your pack's resting voltage at known

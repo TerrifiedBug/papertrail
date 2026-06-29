@@ -146,6 +146,9 @@ mpremote mkdir lib ; mpremote cp lib/uQR.py :lib/uQR.py
   panels) over the normal content, and the cadence stretches to
   `LOW_BATT_INTERVAL_S` (default 600 s) instead of `POLL_INTERVAL_S` (default
   120 s). Crossing the threshold forces one redraw even on an unchanged screen.
+- Critically low (`pct <= 1`, hardcoded `main.CRITICAL_PCT`): full-screen
+  "Battery low" takeover that also **skips the radio** to preserve the last of
+  the runtime — the only case where the screen is fully replaced.
 - **Auto power-aware sleep** (`config.POWER_AUTO_SLEEP=True`, the default): each
   cycle reads the INA219 shunt-current DIRECTION and picks the sleep mode — on
   battery (discharging) -> `machine.deepsleep` (max runtime; the board resets each
