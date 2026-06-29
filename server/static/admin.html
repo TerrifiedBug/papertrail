@@ -1158,7 +1158,8 @@ function openNewDevice() {
   const idInput = el("input", { class: "inp", type: "text", placeholder: "e.g. kitchen-01" });
   const channelsInput = el("input", { class: "inp", type: "text", placeholder: "comma-separated, e.g. home.status, alerts" });
   const pollInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: "120" });
-  const lowBattInput = el("input", { class: "inp", type: "number", min: "30", value: "600" });
+  const lowBattInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: "600" });
+  const lowPctInput = el("input", { class: "inp", type: "number", min: "2", max: "95", value: "15" });
 
   const layoutSel = selectEl(LAYOUTS, "status_card");
   // Pre-seed the fallback with a sensible idle screen so it isn't blank.
@@ -1175,6 +1176,7 @@ function openNewDevice() {
     field("Device id", idInput),
     field("Channels", channelsInput),
     el("div", { class: "two-col" }, field("Poll interval (s)", pollInput), field("Low-batt interval (s)", lowBattInput)),
+    el("div", { class: "two-col" }, field("Low battery % (badge red)", lowPctInput), el("div", {})),
     el("div", { class: "kicker", text: "fallback screen" }),
     el("div", { class: "meta", text: "Shown when no live event is active. Validated against the layout schema." }),
     el("div", { style: "height:8px;" }),
@@ -1197,7 +1199,8 @@ function openNewDevice() {
       channels: channels,
       fallback: { layout: layoutSel.value, content: ed.read() },
       poll_interval_s: Math.max(30, Math.min(3600, Math.round(Number(pollInput.value) || 120))),
-      low_batt_interval_s: Math.max(30, Math.round(Number(lowBattInput.value) || 600))
+      low_batt_interval_s: Math.max(30, Math.min(3600, Math.round(Number(lowBattInput.value) || 600))),
+      low_pct: Math.max(2, Math.min(95, Math.round(Number(lowPctInput.value) || 15)))
     };
     createBtn.disabled = true;
     try {
@@ -1215,7 +1218,8 @@ function openNewDevice() {
 function openEditDevice(d) {
   const channelsInput = el("input", { class: "inp", type: "text", value: (Array.isArray(d.channels) ? d.channels.join(", ") : "") });
   const pollInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: String(d.poll_interval_s) });
-  const lowBattInput = el("input", { class: "inp", type: "number", min: "30", value: String(d.low_batt_interval_s) });
+  const lowBattInput = el("input", { class: "inp", type: "number", min: "30", max: "3600", value: String(d.low_batt_interval_s) });
+  const lowPctInput = el("input", { class: "inp", type: "number", min: "2", max: "95", value: String(d.low_pct != null ? d.low_pct : 15) });
   // Quiet hours (0–23). Blank clears that bound (sent as null to /config).
   const quietStartInput = el("input", { class: "inp", type: "number", min: "0", max: "23",
     value: (d.quiet_start_h != null ? String(d.quiet_start_h) : ""), placeholder: "blank = off" });
@@ -1235,6 +1239,7 @@ function openEditDevice(d) {
   const body = el("div", {},
     field("Channels", channelsInput),
     el("div", { class: "two-col" }, field("Poll interval (s)", pollInput), field("Low-batt interval (s)", lowBattInput)),
+    el("div", { class: "two-col" }, field("Low battery % (badge red)", lowPctInput), el("div", {})),
     el("div", { class: "kicker", text: "quiet hours" }),
     el("div", { class: "meta", text: "Hours (0–23) during which the device skips refreshes. Leave both blank to disable." }),
     el("div", { style: "height:8px;" }),
@@ -1267,7 +1272,8 @@ function openEditDevice(d) {
       channels: channels,
       fallback: { layout: layoutSel.value, content: ed.read() },
       poll_interval_s: Math.max(30, Math.min(3600, Math.round(Number(pollInput.value) || 120))),
-      low_batt_interval_s: Math.max(30, Math.round(Number(lowBattInput.value) || 600))
+      low_batt_interval_s: Math.max(30, Math.min(3600, Math.round(Number(lowBattInput.value) || 600))),
+      low_pct: Math.max(2, Math.min(95, Math.round(Number(lowPctInput.value) || 15)))
     };
     saveBtn.disabled = true;
     try {

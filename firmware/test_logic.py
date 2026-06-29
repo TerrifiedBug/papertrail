@@ -213,6 +213,18 @@ def test_poll_interval_clamp():
     assert poller.clamp_interval([30]) is None, "wrong type (list) -> None"
 
 
+def test_low_pct_clamp():
+    # The server-tunable battery-warn threshold reuses clamp_interval with its own
+    # band; it must stay above the firmware's hardcoded 1% critical takeover.
+    lo, hi = poller.LOW_PCT_MIN, poller.LOW_PCT_MAX
+    assert lo > 1, "warn floor must sit above the 1% critical takeover"
+    assert poller.clamp_interval(15, lo, hi) == 15, "in-band threshold unchanged"
+    assert poller.clamp_interval(1, lo, hi) == lo, "1% clamped up above critical"
+    assert poller.clamp_interval(0, lo, hi) == lo, "0 clamped up to floor"
+    assert poller.clamp_interval(100, lo, hi) == hi, "100 clamped to ceiling"
+    assert poller.clamp_interval(None, lo, hi) is None, "missing -> None (keep default)"
+
+
 # --------------------------------------------------------------------------
 # 2c. Schema-version guard (a future pico-paper.v2 must NOT hit v1 renderers)
 # --------------------------------------------------------------------------
@@ -583,6 +595,7 @@ TESTS = [
     test_split_low,
     test_etag_decision,
     test_poll_interval_clamp,
+    test_low_pct_clamp,
     test_schema_version_guard,
     test_telemetry_query_string,
     test_ota_manifest_diff,

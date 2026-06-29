@@ -354,6 +354,8 @@ ETag: "<sha256-hex>"
   "layout":          "status_card",          // or the fallback's layout
   "content":         { ... },                 // the chosen/fallback content
   "control":         { "poll_interval": 120,  // server->Pico control plane; see "Remote poll interval" below
+                       "low_pct": 15,           // battery % at/below which the badge goes red (server-tunable, clamped [2,95])
+                       "low_batt_interval": 600,// low-battery poll cadence in seconds (clamped [30,3600])
                        "action": { "name": "force_full_refresh", "token": "act_7f3a" } },
                                               //   optional one-shot action (key absent when none); see "One-shot actions"
   "hints":           { "invert": false, "full_refresh": false }, // winning event's render hints, or null
@@ -365,9 +367,12 @@ ETag: "<sha256-hex>"
 ```
 
 The top-level `"control"` block carries server->Pico settings: `poll_interval` (in
-**seconds**, always present) and an optional one-shot `action` (below). It is **not**
-named `"device"` — that key is already the device-id string. The block is
-**additive**: old firmware that predates a key ignores it and keeps its defaults.
+**seconds**, always present), the battery knobs `low_pct` (badge-red threshold) and
+`low_batt_interval` (low-battery cadence), and an optional one-shot `action` (below).
+All are hashed into the ETag, so a change busts the `304` and the device applies it on
+the next poll. It is **not** named `"device"` — that key is already the device-id
+string. The block is **additive**: old firmware that predates a key ignores it and
+keeps its defaults.
 
 #### One-shot device actions — `control.action`
 

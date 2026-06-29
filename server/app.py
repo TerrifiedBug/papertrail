@@ -50,6 +50,8 @@ DEFAULT_MAX_BODY_BYTES = 8192        # 8 KiB hard cap -> 413
 
 POLL_INTERVAL_MIN = 30               # seconds; remote deep-sleep clamp floor
 POLL_INTERVAL_MAX = 3600             # seconds; remote deep-sleep clamp ceiling
+LOW_PCT_MIN = 2                      # battery-warn threshold floor (must stay > the
+LOW_PCT_MAX = 95                     # hardcoded 1% critical takeover); ceiling sane-cap
 
 _FW_RE = re.compile(r"^[A-Za-z0-9._-]+$")   # telemetry fw charset
 
@@ -341,6 +343,9 @@ def create_app(
             "channels": device.channels,
             "poll_interval_s": device.poll_interval_s,
             "low_batt_interval_s": device.low_batt_interval_s,
+            "low_pct": device.low_pct,
+            "quiet_start_h": device.quiet_start_h,
+            "quiet_end_h": device.quiet_end_h,
             "fallback": device.fallback,
             "telemetry": {
                 "last_seen_at": device.last_seen_at,
@@ -752,12 +757,15 @@ def create_app(
 
         poll = raw.get("poll_interval_s", 120)
         low = raw.get("low_batt_interval_s", 600)
-        if not _is_int(poll) or not _is_int(low):
+        low_pct = raw.get("low_pct", 15)
+        if not _is_int(poll) or not _is_int(low) or not _is_int(low_pct):
             raise HTTPException(
                 status_code=422,
-                detail="poll_interval_s / low_batt_interval_s must be integers",
+                detail="poll_interval_s / low_batt_interval_s / low_pct must be integers",
             )
         poll = max(POLL_INTERVAL_MIN, min(POLL_INTERVAL_MAX, poll))
+        low = max(POLL_INTERVAL_MIN, min(POLL_INTERVAL_MAX, low))
+        low_pct = max(LOW_PCT_MIN, min(LOW_PCT_MAX, low_pct))
 
         created = store.add_device(
             id=device_id,
@@ -765,6 +773,7 @@ def create_app(
             fallback=raw["fallback"],
             poll_interval_s=poll,
             low_batt_interval_s=low,
+            low_pct=low_pct,
         )
         if not created:
             raise HTTPException(status_code=409, detail="device id already exists")
@@ -779,7 +788,7 @@ def create_app(
         if not isinstance(raw, dict):
             raise HTTPException(status_code=422, detail="body must be a JSON object")
 
-        allowed = {"channels", "fallback", "poll_interval_s", "low_batt_interval_s"}
+        allowed = {"channels", "fallback", "poll_interval_s", "low_batt_interval_s", "low_pct"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise HTTPException(status_code=422, detail=f"unknown keys: {unknown}")
@@ -805,7 +814,12 @@ def create_app(
             value = raw["low_batt_interval_s"]
             if not _is_int(value):
                 raise HTTPException(status_code=422, detail="low_batt_interval_s must be an integer")
-            kwargs["low_batt_interval_s"] = value
+            kwargs["low_batt_interval_s"] = max(POLL_INTERVAL_MIN, min(POLL_INTERVAL_MAX, value))
+        if "low_pct" in raw:
+            value = raw["low_pct"]
+            if not _is_int(value):
+                raise HTTPException(status_code=422, detail="low_pct must be an integer")
+            kwargs["low_pct"] = max(LOW_PCT_MIN, min(LOW_PCT_MAX, value))
 
         store.update_device(device_id, **kwargs)
         return _device_admin_dict(store.get_device(device_id))

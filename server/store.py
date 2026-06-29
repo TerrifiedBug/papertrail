@@ -63,6 +63,7 @@ class DeviceRow:
     fallback: dict[str, Any]        # {layout, content}
     poll_interval_s: int
     low_batt_interval_s: int
+    low_pct: int = 15               # battery % at/below which the badge goes red (server-tunable)
     # Telemetry piggybacked on the poll (best-effort, all nullable until first seen).
     last_seen_at: Optional[int] = None
     last_batt: Optional[int] = None
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS devices (
   fallback            TEXT NOT NULL,
   poll_interval_s     INTEGER NOT NULL DEFAULT 120,
   low_batt_interval_s INTEGER NOT NULL DEFAULT 600,
+  low_pct             INTEGER NOT NULL DEFAULT 15,
   last_seen_at        INTEGER,
   last_batt           INTEGER,
   last_rssi           INTEGER,
@@ -154,8 +156,9 @@ CREATE INDEX IF NOT EXISTS idx_battery_device_at ON battery_samples(device, at);
 
 # Bumped when the schema changes; stamped into meta(schema_version) by init_db so
 # diagnostics + future ordered migrations can read it. v1 = original; v2 = events.kind
-# added + obsolete priority dropped; v3 = meta + battery_samples + device quiet-hours.
-SCHEMA_VERSION = 3
+# added + obsolete priority dropped; v3 = meta + battery_samples + device quiet-hours;
+# v4 = device low_pct (server-tunable battery threshold).
+SCHEMA_VERSION = 4
 
 
 class Store:
@@ -202,6 +205,9 @@ class Store:
         ("pending_action", "TEXT"),
         ("action_token", "INTEGER NOT NULL DEFAULT 0"),
     )
+    _DEVICE_V4_COLUMNS = (
+        ("low_pct", "INTEGER NOT NULL DEFAULT 15"),
+    )
     _OBSOLETE_COLUMNS = (("events", "priority"),)
 
     def init_db(self) -> None:
@@ -213,6 +219,7 @@ class Store:
             self._add_columns(conn, "events", self._EVENT_COLUMNS)
             self._add_columns(conn, "devices", self._TELEMETRY_COLUMNS)
             self._add_columns(conn, "devices", self._DEVICE_V3_COLUMNS)
+            self._add_columns(conn, "devices", self._DEVICE_V4_COLUMNS)
             self._drop_columns(conn, self._OBSOLETE_COLUMNS)
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?)"
@@ -327,7 +334,7 @@ class Store:
     # --- devices ----------------------------------------------------------------
 
     _DEVICE_COLS = (
-        "id, channels, fallback, poll_interval_s, low_batt_interval_s,"
+        "id, channels, fallback, poll_interval_s, low_batt_interval_s, low_pct,"
         " last_seen_at, last_batt, last_rssi, last_fw, last_uptime,"
         " quiet_start_h, quiet_end_h, pending_action, action_token"
     )
@@ -340,6 +347,7 @@ class Store:
             fallback=json.loads(r["fallback"]),
             poll_interval_s=r["poll_interval_s"],
             low_batt_interval_s=r["low_batt_interval_s"],
+            low_pct=r["low_pct"],
             last_seen_at=r["last_seen_at"],
             last_batt=r["last_batt"],
             last_rssi=r["last_rssi"],
@@ -476,6 +484,7 @@ class Store:
         fallback: dict[str, Any],
         poll_interval_s: int = 120,
         low_batt_interval_s: int = 600,
+        low_pct: int = 15,
     ) -> bool:
         """Insert a new device. Returns False if the id already exists (caller
         maps that to 409). The caller is responsible for validating ``fallback``
@@ -483,14 +492,15 @@ class Store:
         with self._conn() as conn:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO devices"
-                " (id, channels, fallback, poll_interval_s, low_batt_interval_s)"
-                " VALUES (?, ?, ?, ?, ?)",
+                " (id, channels, fallback, poll_interval_s, low_batt_interval_s, low_pct)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     id,
                     json.dumps(channels),
                     json.dumps(fallback),
                     int(poll_interval_s),
                     int(low_batt_interval_s),
+                    int(low_pct),
                 ),
             )
             return cur.rowcount > 0
@@ -503,6 +513,7 @@ class Store:
         fallback: Optional[dict[str, Any]] = None,
         poll_interval_s: Optional[int] = None,
         low_batt_interval_s: Optional[int] = None,
+        low_pct: Optional[int] = None,
     ) -> bool:
         """Partial update (PATCH). Only the fields explicitly passed (not None)
         are written. Returns False if the device does not exist."""
@@ -520,6 +531,9 @@ class Store:
         if low_batt_interval_s is not None:
             sets.append("low_batt_interval_s = ?")
             vals.append(int(low_batt_interval_s))
+        if low_pct is not None:
+            sets.append("low_pct = ?")
+            vals.append(int(low_pct))
         if not sets:
             # Nothing to change: succeed iff the device exists.
             return self.get_device(device_id) is not None

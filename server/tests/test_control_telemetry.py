@@ -200,7 +200,23 @@ def test_resolve_swaps_bad_fallback_for_idle():
     res = resolve_from_events(dev, [], now=1000)
     assert res.layout == _IDLE_FALLBACK["layout"]
     assert res.content == _IDLE_FALLBACK["content"]
-    assert res.control == {"poll_interval": 120}
+    assert res.control == {"poll_interval": 120, "low_pct": 15, "low_batt_interval": 600}
+
+
+def test_control_reflects_per_device_battery_knobs():
+    # low_pct + low_batt_interval ride the control block from the device row so the
+    # firmware applies the server-tuned values.
+    dev = DeviceRow(
+        id="x",
+        channels=[],
+        fallback={"layout": "metric", "content": {"value": 1.0}},
+        poll_interval_s=120,
+        low_batt_interval_s=900,
+        low_pct=8,
+    )
+    res = resolve_from_events(dev, [], now=1000)
+    assert res.control["low_pct"] == 8
+    assert res.control["low_batt_interval"] == 900
 
 
 def test_resolve_swaps_non_dict_fallback_for_idle():
