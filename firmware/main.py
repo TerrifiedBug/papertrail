@@ -41,10 +41,26 @@ try:
 except ImportError:                  # host (py_compile / import) -- stdlib time
     import time
 
-# Sentinels stored in place of a real ETag so we don't redraw an unchanged
-# offline/low-battery screen every wake.
-LOWBATT_SENTINEL = "__lowbatt__"
+# Sentinel stored in place of a real ETag so we don't redraw an unchanged
+# offline screen every wake.
 OFFLINE_SENTINEL = "__offline__"
+LOWBATT_SENTINEL = "__lowbatt__"   # critical-battery takeover screen is up
+
+# Two-stage low battery:
+#  - `low` (config BATTERY["low_pct"]): reddens the badge on the NORMAL content
+#    (the badge colour rides the ETag via LOW_TAG; a threshold crossing forces one
+#    redraw even on a 304, else the warning wouldn't appear until the next change).
+#  - CRITICAL_PCT (hardcoded floor): take over the whole screen AND skip the radio
+#    to wring out the last of the runtime. The only time the screen is replaced.
+LOW_TAG = "|low"
+CRITICAL_PCT = 1
+
+
+def _split_low(stored):
+    """Split a persisted ETag into (base_etag, was_low) by stripping LOW_TAG."""
+    if stored.endswith(LOW_TAG):
+        return stored[:-len(LOW_TAG)], True
+    return stored, False
 
 
 def _secrets():
@@ -190,17 +206,28 @@ def cycle(panel, last_etag, interval_pref):
     """
     secrets = _secrets()
 
-    # 1. Battery + power source (no radio needed).
+    # 1. Battery + power source (no radio needed). A low battery reddens the badge
+    # (handled below in the render path) and stretches the sleep cadence, but no
+    # longer skips the poll or takes over the screen -- UNLESS it's critically low.
     pct, low, on_battery = read_battery()
     use_deep = _use_deepsleep(on_battery)
-    if low:
+
+    # Critically low: take over the screen and skip the radio to preserve runtime.
+    if pct is not None and pct <= CRITICAL_PCT:
         if last_etag != LOWBATT_SENTINEL:
-            panel.draw(render.draw_low_battery, pct if pct is not None else 0)
+            panel.draw(render.draw_low_battery, pct)
             save_etag(LOWBATT_SENTINEL)
         return LOWBATT_SENTINEL, config.LOW_BATT_INTERVAL_S, interval_pref, use_deep
 
-    # Leaving a sentinel screen: force a fresh fetch+render by dropping the ETag.
-    poll_etag = "" if last_etag in (LOWBATT_SENTINEL, OFFLINE_SENTINEL) else last_etag
+    def low_sleep(pref):
+        return config.LOW_BATT_INTERVAL_S if low else pref
+
+    base_etag, was_low = _split_low(last_etag)
+    # Leaving a sentinel screen -- or crossing the low-battery threshold (badge
+    # colour flips) -- forces a fresh fetch+render by dropping the ETag.
+    poll_etag = "" if base_etag in (LOWBATT_SENTINEL, OFFLINE_SENTINEL) else base_etag
+    if low != was_low:
+        poll_etag = ""
 
     # 2/3. WiFi + poll wrapped in ONE try/finally so the CYW43 radio ALWAYS powers
     # down before we render/sleep -- even when connect fails. (The old early-return
@@ -240,11 +267,11 @@ def cycle(panel, last_etag, interval_pref):
         wifi.disconnect()                       # radio off before any draw / sleep
 
     if not wifi_ok:
-        if last_etag != OFFLINE_SENTINEL:
+        if base_etag != OFFLINE_SENTINEL:
             panel.draw(render.draw_offline, "wifi failed")
             save_etag(OFFLINE_SENTINEL)      # persist: a deepsleep reset must re-fetch,
                                              # not poll a stale etag -> 304 -> stuck offline
-        return OFFLINE_SENTINEL, interval_pref, interval_pref, use_deep
+        return OFFLINE_SENTINEL, low_sleep(interval_pref), interval_pref, use_deep
 
     # Apply any server-tuned cadence (already clamped to [30,3600] by the poller).
     new_pref = interval_pref
@@ -266,31 +293,32 @@ def cycle(panel, last_etag, interval_pref):
             print("action: clear")
             panel.draw(render.draw_blank)
             save_etag("")                        # re-render on the next change
-            return "", new_pref, new_pref, use_deep
+            return "", low_sleep(new_pref), new_pref, use_deep
 
     action = result["action"]
     if action == "render":
         screen = result["screen"] or {}
         hints = result.get("hints") or {}
-        # battery badge overlaid bottom-right (low is False on this path -- a low
-        # battery short-circuits above). `invert` is a per-event render hint.
+        # battery badge overlaid bottom-right; `low` reddens it (tri-color only).
+        # `invert` is a per-event render hint.
         panel.draw(render.draw_to_epd, screen.get("layout"),
                    screen.get("content") or {}, (pct, on_battery, low),
                    bool(hints.get("invert")))
-        new = result["etag"] or ""
-        save_etag(new)
-        print("rendered:", screen.get("layout"), "etag", new[:12], "interval", new_pref)
-        return new, new_pref, new_pref, use_deep
+        stored = (result["etag"] or "") + (LOW_TAG if low else "")
+        save_etag(stored)                        # low state rides the ETag (see LOW_TAG)
+        print("rendered:", screen.get("layout"), "etag", stored[:12], "interval", new_pref)
+        return stored, low_sleep(new_pref), new_pref, use_deep
 
     if action == "offline":
-        if last_etag != OFFLINE_SENTINEL:
+        if base_etag != OFFLINE_SENTINEL:
             panel.draw(render.draw_offline, result.get("error") or "server error")
             save_etag(OFFLINE_SENTINEL)      # persist (see wifi-fail path above)
-        return OFFLINE_SENTINEL, new_pref, new_pref, use_deep
+        return OFFLINE_SENTINEL, low_sleep(new_pref), new_pref, use_deep
 
-    # action == "skip": unchanged (304) -> panel untouched.
+    # action == "skip": unchanged (304) -> panel untouched. last_etag already
+    # carries the right low marker (a threshold crossing would have forced a fetch).
     print("unchanged (304) -> skip")
-    return last_etag, new_pref, new_pref, use_deep
+    return last_etag, low_sleep(new_pref), new_pref, use_deep
 
 
 def sleep(seconds, use_deep):

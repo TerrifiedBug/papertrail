@@ -314,6 +314,8 @@ def render_offline(canvas, detail=""):
 
 
 def render_low_battery(canvas, pct):
+    """Critical-battery takeover (hardcoded floor, see main.CRITICAL_PCT) -- the
+    only time the screen is fully replaced; the `low` warning just reddens the badge."""
     render_metric(canvas, {
         "label": "Battery low",
         "value": str(pct),
